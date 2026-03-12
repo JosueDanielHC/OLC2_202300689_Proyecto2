@@ -89,6 +89,4 @@ golampi-interpreter/
 
 ---
 
-## Licencia
 
-[Indicar licencia si aplica; por ejemplo: uso académico, MIT, etc.]
