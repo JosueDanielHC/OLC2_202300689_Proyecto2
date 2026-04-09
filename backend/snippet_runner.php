@@ -15,6 +15,36 @@ $code = stream_get_contents(STDIN);
 if ($code === false) {
     $code = '';
 }
+if ($code !== '') {
+    $code = preg_replace(
+        '/\bvar\s+([_a-zA-Z][_a-zA-Z0-9]*(?:\s*,\s*[_a-zA-Z][_a-zA-Z0-9]*)+)\s*=\s*/',
+        '$1 := ',
+        $code
+    ) ?? $code;
+    $code = preg_replace('/\brune\s*\(/', '(', $code) ?? $code;
+    $code = preg_replace_callback(
+        '/(^[ \t]*case[ \t]+)(-?\d+)[ \t]*\.\.[ \t]*(-?\d+)([ \t]*:)/m',
+        static function (array $m): string {
+            $prefix = $m[1];
+            $start = (int) $m[2];
+            $end = (int) $m[3];
+            $suffix = $m[4];
+            if (abs($end - $start) > 1000) {
+                return $m[0];
+            }
+            $step = $start <= $end ? 1 : -1;
+            $items = [];
+            for ($i = $start; ; $i += $step) {
+                $items[] = (string) $i;
+                if ($i === $end) {
+                    break;
+                }
+            }
+            return $prefix . implode(', ', $items) . $suffix;
+        },
+        $code
+    ) ?? $code;
+}
 
 $input = InputStream::fromString($code);
 $lexer = new GolampiLexer($input);

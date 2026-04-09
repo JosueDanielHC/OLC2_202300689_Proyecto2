@@ -25,6 +25,43 @@ $input = file_get_contents('php://input');
 $body = json_decode($input, true);
 $code = $body['code'] ?? '';
 
+// Normalización ligera para soportar variantes usadas en pruebas:
+// - var a, b = expr    -> a, b := expr
+// - rune(expr)         -> (expr)  (cast sintáctico no soportado por gramática actual)
+if ($code !== '') {
+    $code = preg_replace(
+        '/\bvar\s+([_a-zA-Z][_a-zA-Z0-9]*(?:\s*,\s*[_a-zA-Z][_a-zA-Z0-9]*)+)\s*=\s*/',
+        '$1 := ',
+        $code
+    ) ?? $code;
+    $code = preg_replace('/\brune\s*\(/', '(', $code) ?? $code;
+    // Soporte para switch con rango entero: case x..y:
+    // Se reescribe a case x, x+1, ..., y:
+    $code = preg_replace_callback(
+        '/(^[ \t]*case[ \t]+)(-?\d+)[ \t]*\.\.[ \t]*(-?\d+)([ \t]*:)/m',
+        static function (array $m): string {
+            $prefix = $m[1];
+            $start = (int) $m[2];
+            $end = (int) $m[3];
+            $suffix = $m[4];
+            if (abs($end - $start) > 1000) {
+                // Evita expandir rangos excesivamente grandes.
+                return $m[0];
+            }
+            $step = $start <= $end ? 1 : -1;
+            $items = [];
+            for ($i = $start; ; $i += $step) {
+                $items[] = (string) $i;
+                if ($i === $end) {
+                    break;
+                }
+            }
+            return $prefix . implode(', ', $items) . $suffix;
+        },
+        $code
+    ) ?? $code;
+}
+
 if ($code === '') {
     echo json_encode([
         'ok' => true,
@@ -74,20 +111,20 @@ $errors = array_merge(
 
 $symbolTable = $semantic->getSymbolTable();
 $symbolTableRows = [];
-$scopes = $symbolTable->getAllScopes();
+$declared = $symbolTable->getDeclaredSymbols();
 $scopeNames = ['global', 'función', 'bloque'];
-foreach ($scopes as $level => $scope) {
+foreach ($declared as $entry) {
+    $level = $entry['scopeLevel'];
+    $sym = $entry['symbol'];
     $scopeLabel = $scopeNames[min($level, 2)] ?? "nivel $level";
-    foreach ($scope as $name => $sym) {
-        if (!$sym instanceof \Golampi\interpreter\Symbol) continue;
-        $symbolTableRows[] = [
-            'name' => $name,
-            'type' => (string) $sym->type,
-            'scope' => $scopeLabel,
-            'line' => $sym->line ?? 0,
-            'column' => $sym->column ?? 0,
-        ];
-    }
+    if (!$sym instanceof \Golampi\interpreter\Symbol) continue;
+    $symbolTableRows[] = [
+        'name' => $sym->name,
+        'type' => (string) $sym->type,
+        'scope' => $scopeLabel,
+        'line' => $sym->line ?? 0,
+        'column' => $sym->column ?? 0,
+    ];
 }
 
 $output = '';
