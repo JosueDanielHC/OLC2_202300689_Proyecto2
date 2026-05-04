@@ -1,8 +1,7 @@
 # Documentación Técnica — Golampi Interpreter
 
 **Proyecto:** Intérprete del lenguaje Golampi  
-**Versión:** 1.0  
-**Fecha:** [Completar según entrega]
+
 
 ---
 
@@ -394,7 +393,7 @@ flowchart LR
 
 - **Arquitectura:** Aplicación web **monolítica** cliente-servidor. Toda la lógica del intérprete reside en el servidor (PHP); el cliente (navegador) solo presenta la interfaz y envía/recibe datos por HTTP.
 - **Flujo de datos:**  
-  `Usuario (GUI) → POST /backend/api.php { code } → Lexer → Parser → SemanticVisitor (SymbolTable, ErrorHandler) → [ExecutionVisitor si no hay errores] → ReportGenerator → JSON → GUI (consola, tabla de errores, descargas).`
+  `Usuario (GUI) → POST /Proyecto1/backend/api.php { code } → Lexer → Parser → SemanticVisitor (SymbolTable, ErrorHandler) → [ExecutionVisitor si no hay errores] → ReportGenerator → JSON → GUI (consola, tabla de errores, descargas).`
 - **Patrones de diseño:**  
   - **Visitor:** SemanticVisitor y ExecutionVisitor recorren el árbol generado por ANTLR.  
   - **Pila de scopes:** SymbolTable implementa ámbitos anidados (global, función, bloque).  

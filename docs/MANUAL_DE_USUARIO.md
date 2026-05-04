@@ -1,8 +1,6 @@
 # Manual de Usuario — Golampi Interpreter
 
 **Proyecto:** Intérprete del lenguaje Golampi  
-**Versión:** 1.0  
-**Fecha:** [Completar según entrega]
 
 ---
 
@@ -25,7 +23,7 @@
    ```
 2. Instalar dependencias del backend:
    ```bash
-   cd backend
+   cd Proyecto1/backend
    composer install
    cd ..
    ```
@@ -53,9 +51,9 @@ El proyecto se ejecuta con el servidor de desarrollo integrado de PHP. **Debe in
 ### 1.4 Acceso desde el navegador
 
 - **Interfaz principal:**  
-  [http://localhost:8000/frontend/index.html](http://localhost:8000/frontend/index.html)
+  [http://localhost:8000/Proyecto1/frontend/index.html](http://localhost:8000/Proyecto1/frontend/index.html)
 
-- Si se usa otro puerto o equipo, sustituir `localhost` y el puerto según corresponda (por ejemplo, `http://192.168.1.10:8000/frontend/index.html`).
+- Si se usa otro puerto o equipo, sustituir `localhost` y el puerto según corresponda (por ejemplo, `http://192.168.1.10:8000/Proyecto1/frontend/index.html`).
 
 ---
 
@@ -97,7 +95,7 @@ Zona de descarga de archivos generados tras una ejecución/análisis:
 | **Descargar errores** | `errores.html` o `errores.txt` | Si hay errores: tabla en HTML (abrible en el navegador). Si no hay errores: archivo de texto indicando que no hay errores. |
 | **Descargar tabla de símbolos** | `tabla_simbolos.txt` | Tabla con identificadores, tipo, ámbito, valor (si aplica), línea y columna. |
 
-Al pie del panel se muestra la **URL de la API** que usa la interfaz (por defecto, `http://localhost:8000/backend/api.php`). [Completar si en tu versión se muestra otra información.]
+Al pie del panel se muestra la **URL de la API** que usa la interfaz del Proyecto 1 (por defecto, `http://localhost:8000/Proyecto1/backend/api.php`).
 
 ---
 
@@ -246,7 +244,7 @@ A continuación se listan mensajes típicos y cómo interpretarlos. [Completar o
 | La cantidad de variables en la asignación no coincide con la cantidad de valores retornados | En `x := f()` o `x, y, z := f()`, el número de variables no coincide con el número de retornos de `f`. | Ajustar el número de variables (p. ej. `x, ok := dividir(10, 2)` si `dividir` retorna 2 valores). |
 | Índice fuera de rango para array de tamaño N | Acceso a un índice &lt; 0 o ≥ tamaño del arreglo (validado en análisis o en ejecución). | Asegurarse de que el índice esté dentro de `[0, N-1]`. |
 | El índice de array debe ser de tipo int32 | El valor usado como índice no es entero. | Usar una expresión de tipo `int32` como índice. |
-| Error de conexión: ... | El navegador no pudo contactar con el backend. | Comprobar que el servidor PHP está corriendo desde la raíz del proyecto y que la URL de la API es correcta (p. ej. `http://localhost:8000/backend/api.php`). |
+| Error de conexión: ... | El navegador no pudo contactar con el backend. | Comprobar que el servidor PHP está corriendo desde la raíz del proyecto y que la URL de la API es correcta (p. ej. `http://localhost:8000/Proyecto1/backend/api.php`). |
 
 [Incluir aquí cualquier otro mensaje específico de tu implementación.]
 
@@ -260,7 +258,7 @@ A continuación se listan mensajes típicos y cómo interpretarlos. [Completar o
   ```bash
   php -S 0.0.0.0:8000
   ```
-  y abrir de nuevo [http://localhost:8000/frontend/index.html](http://localhost:8000/frontend/index.html).
+  y abrir de nuevo [http://localhost:8000/Proyecto1/frontend/index.html](http://localhost:8000/Proyecto1/frontend/index.html).
 
 ---
 

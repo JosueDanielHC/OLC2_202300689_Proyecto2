@@ -23,7 +23,14 @@ final class Paths
 
     public static function legacyBackendRoot(): string
     {
-        return self::repositoryRoot() . '/Proyecto1/backend';
+        $root = self::repositoryRoot() . '/Proyecto1/backend';
+        if (!is_file($root . '/generated/GolampiParser.php')) {
+            throw new \RuntimeException(
+                'Artefactos ANTLR no encontrados. Ejecute: cd Proyecto1/backend && composer install'
+            );
+        }
+
+        return $root;
     }
 
     public static function outputAsmPath(): string

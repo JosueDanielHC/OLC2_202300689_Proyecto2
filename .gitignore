@@ -8,6 +8,7 @@ Proyecto2/toolchain/downloads/
 # Artefactos de compilación ARM64 en salida local
 Proyecto2/output/asm/*.o
 Proyecto2/output/asm/program
+Proyecto2/output/asm/program.s
 
 # IDE / sistema
 .idea/
