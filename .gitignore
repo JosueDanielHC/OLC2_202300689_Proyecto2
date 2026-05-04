@@ -1,5 +1,13 @@
-# Dependencias PHP (instalar con: cd backend && composer install)
-backend/vendor/
+# Dependencias PHP (composer install en cada backend)
+Proyecto1/backend/vendor/
+Proyecto2/backend/vendor/
+
+# Descargas del toolchain local (el sysroot sí se versiona)
+Proyecto2/toolchain/downloads/
+
+# Artefactos de compilación ARM64 en salida local
+Proyecto2/output/asm/*.o
+Proyecto2/output/asm/program
 
 # IDE / sistema
 .idea/
