@@ -149,7 +149,7 @@
       <button type="button" id="btnDownloadErrors">Descargar errores</button>
       <button type="button" id="btnDownloadSymbols">Descargar tabla de símbolos</button>
     </div>
-    <p class="api-url">API: <span id="apiUrl">./backend/api.php</span></p>
+    <p class="api-url">API: <span id="apiUrl">./Proyecto1/backend/api.php</span></p>
   </div>
 
   <script>
@@ -159,7 +159,7 @@
     let lastResult = { output: '', errors: [], reportResult: '', reportErrors: '', reportSymbols: '' };
 
     function apiUrl() {
-      return window.location.origin + '/backend/api.php';
+      return window.location.origin + '/Proyecto1/backend/api.php';
     }
     document.getElementById('apiUrl').textContent = apiUrl();
 

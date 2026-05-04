@@ -11,6 +11,8 @@ class SymbolTable
 {
     /** @var list<array<string, Symbol>> Pila de scopes; cada scope es un mapa nombre -> símbolo */
     private array $scopes = [];
+    /** @var list<array{scopeLevel:int,symbol:Symbol}> Historial de símbolos declarados (incluye scopes ya cerrados). */
+    private array $declaredSymbols = [];
 
     public function __construct()
     {
@@ -41,6 +43,10 @@ class SymbolTable
             throw new \RuntimeException("Identificador '$name' ya declarado en este ámbito.");
         }
         $this->scopes[$idx][$name] = $symbol;
+        $this->declaredSymbols[] = [
+            'scopeLevel' => $idx,
+            'symbol' => $symbol,
+        ];
     }
 
     /**
@@ -75,5 +81,15 @@ class SymbolTable
     public function getAllScopes(): array
     {
         return $this->scopes;
+    }
+
+    /**
+     * Retorna todos los símbolos declarados durante el análisis, incluyendo los de
+     * scopes que ya fueron cerrados.
+     * @return list<array{scopeLevel:int,symbol:Symbol}>
+     */
+    public function getDeclaredSymbols(): array
+    {
+        return $this->declaredSymbols;
     }
 }

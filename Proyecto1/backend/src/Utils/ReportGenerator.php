@@ -33,17 +33,19 @@ class ReportGenerator
     {
         $lines = ["Identificador\tTipo\tÁmbito\tValor\tLínea\tColumna"];
         $scopeNames = ['global', 'función', 'bloque'];
-        $scopes = $this->symbolTable->getAllScopes();
-        foreach ($scopes as $scopeLevel => $scope) {
-            $scopeLabel = $scopeNames[min($scopeLevel, 2)] . ($scopeLevel > 0 ? " (nivel $scopeLevel)" : '');
-            foreach ($scope as $name => $symbol) {
-                if (!$symbol instanceof Symbol) continue;
-                $typeStr = (string) $symbol->type;
-                $value = '—';
-                $line = $symbol->line ?? 0;
-                $col = $symbol->column ?? 0;
-                $lines[] = $name . "\t" . $typeStr . "\t" . $scopeLabel . "\t" . $value . "\t" . $line . "\t" . $col;
+        $declared = $this->symbolTable->getDeclaredSymbols();
+        foreach ($declared as $entry) {
+            $scopeLevel = $entry['scopeLevel'];
+            $symbol = $entry['symbol'];
+            if (!$symbol instanceof Symbol) {
+                continue;
             }
+            $scopeLabel = $scopeNames[min($scopeLevel, 2)] . ($scopeLevel > 0 ? " (nivel $scopeLevel)" : '');
+            $typeStr = (string) $symbol->type;
+            $value = '—';
+            $line = $symbol->line ?? 0;
+            $col = $symbol->column ?? 0;
+            $lines[] = $symbol->name . "\t" . $typeStr . "\t" . $scopeLabel . "\t" . $value . "\t" . $line . "\t" . $col;
         }
         return implode("\n", $lines);
     }

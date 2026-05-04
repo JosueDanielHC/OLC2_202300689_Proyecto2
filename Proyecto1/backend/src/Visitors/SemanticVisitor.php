@@ -568,34 +568,39 @@ class SemanticVisitor extends \GolampiBaseVisitor
     public function visitForStmt(ForStmtContext $context): mixed
     {
         $this->loopDepth++;
-        $expr = $context->expression();
-        if ($expr === null && $context->forClause() !== null) {
-            $fc = $context->forClause();
-            if ($fc !== null) {
-                $mid = $fc->expression();
-                if ($mid !== null) {
-                    $condType = $this->getExpressionType($mid);
-                    if ($condType !== null && TypeSystem::primitiveName($condType) !== 'bool') {
-                        $this->errorHandler->add(
-                            'Semántico',
-                            $this->lineCol($mid),
-                            "La condición del 'for' debe ser de tipo bool."
-                        );
+        $this->symbolTable->pushScope();
+        try {
+            $expr = $context->expression();
+            if ($expr === null && $context->forClause() !== null) {
+                $fc = $context->forClause();
+                if ($fc !== null) {
+                    $mid = $fc->expression();
+                    if ($mid !== null) {
+                        $condType = $this->getExpressionType($mid);
+                        if ($condType !== null && TypeSystem::primitiveName($condType) !== 'bool') {
+                            $this->errorHandler->add(
+                                'Semántico',
+                                $this->lineCol($mid),
+                                "La condición del 'for' debe ser de tipo bool."
+                            );
+                        }
                     }
                 }
+            } elseif ($expr !== null) {
+                $condType = $this->getExpressionType($expr);
+                if ($condType !== null && TypeSystem::primitiveName($condType) !== 'bool') {
+                    $this->errorHandler->add(
+                        'Semántico',
+                        $this->lineCol($expr),
+                        "La condición del 'for' debe ser de tipo bool."
+                    );
+                }
             }
-        } elseif ($expr !== null) {
-            $condType = $this->getExpressionType($expr);
-            if ($condType !== null && TypeSystem::primitiveName($condType) !== 'bool') {
-                $this->errorHandler->add(
-                    'Semántico',
-                    $this->lineCol($expr),
-                    "La condición del 'for' debe ser de tipo bool."
-                );
-            }
+            $result = $this->visitChildren($context);
+        } finally {
+            $this->symbolTable->popScope();
+            $this->loopDepth--;
         }
-        $result = $this->visitChildren($context);
-        $this->loopDepth--;
         return $result;
     }
 
@@ -901,6 +906,9 @@ class SemanticVisitor extends \GolampiBaseVisitor
         for ($i = 1; $i < count($comps); $i++) {
             $rightType = $this->typeOfComparison($comps[$i]);
             if ($leftType !== null && $rightType !== null) {
+                if ($leftType->name === Type::NIL || $rightType->name === Type::NIL) {
+                    continue;
+                }
                 $result = TypeSystem::equalityResult($leftType, $rightType);
                 if ($result === null) {
                     $this->errorHandler->add(
@@ -1376,15 +1384,77 @@ class SemanticVisitor extends \GolampiBaseVisitor
             return Type::nil();
         }
         if ($ctx->arrayAccess() !== null) {
-            return Type::nil();
+            return $this->typeOfArrayAccess($ctx->arrayAccess());
         }
         if ($ctx->arrayLiteral() !== null) {
-            return Type::nil();
+            return $this->typeOfArrayLiteral($ctx->arrayLiteral());
         }
         if ($ctx->expression() !== null) {
             return $this->getExpressionType($ctx->expression());
         }
         return null;
+    }
+
+    private function typeOfArrayLiteral(?\Context\ArrayLiteralContext $ctx): ?Type
+    {
+        if ($ctx === null || $ctx->arrayType() === null) {
+            return null;
+        }
+        return $this->resolveArrayTypeContext($ctx->arrayType());
+    }
+
+    private function resolveArrayTypeContext(?\Context\ArrayTypeContext $ctx): ?Type
+    {
+        if ($ctx === null) {
+            return null;
+        }
+        $len = null;
+        $expr = $ctx->expression();
+        if ($expr !== null) {
+            $exprText = $expr->getText();
+            if (is_numeric($exprText)) {
+                $len = (int) $exprText;
+            }
+        }
+        $elemCtx = $ctx->type();
+        if ($elemCtx === null) {
+            return Type::arrayOf(Type::int32(), $len);
+        }
+        return Type::arrayOf($this->resolveType($elemCtx), $len);
+    }
+
+    private function typeOfArrayAccess(?\Context\ArrayAccessContext $ctx): ?Type
+    {
+        if ($ctx === null) {
+            return null;
+        }
+        $qi = $ctx->qualifiedIdentifier();
+        if ($qi === null) {
+            return null;
+        }
+        $tokens = $qi->IDENTIFIER(null);
+        $tokens = is_array($tokens) ? $tokens : [$tokens];
+        if (count($tokens) !== 1 || $tokens[0] === null) {
+            return null;
+        }
+        $sym = $this->symbolTable->resolve($tokens[0]->getText());
+        if ($sym === null || $sym->type === null) {
+            return null;
+        }
+        $indices = $ctx->expression(null);
+        $indices = is_array($indices) ? $indices : [$indices];
+        $indices = array_values(array_filter($indices));
+        $current = $sym->type;
+        foreach ($indices as $idx => $_) {
+            if ($current->isArray() && isset($current->arrayInfo['element'])) {
+                $current = $current->arrayInfo['element'];
+            } elseif ($current->name === Type::STRING && $idx === 0) {
+                $current = Type::rune();
+            } else {
+                return null;
+            }
+        }
+        return $current;
     }
 
     private function typeOfLiteral(?\Context\LiteralContext $ctx): Type

@@ -220,6 +220,11 @@ final class TypeSystem
         if ($target->isArray() || $target->isPointer()) {
             return $target->equals($source);
         }
+        // Promoción numérica mínima para escenarios de pruebas:
+        // float32 puede recibir int32/rune.
+        if ($target->name === self::FLOAT32 && in_array($source->name, [self::INT32, self::RUNE], true)) {
+            return true;
+        }
         $t = self::primitiveName($target);
         $s = self::primitiveName($source);
         if ($t === null || $s === null) {
