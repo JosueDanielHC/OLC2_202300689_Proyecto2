@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Manual Técnico - Golampi Compiler</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.5; color: #222; }
+    h1, h2, h3 { color: #6c1c1c; }
+    code, pre { font-family: Consolas, monospace; }
+    pre { background: #f5f5f5; padding: 12px; border-radius: 6px; }
+    table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+    th { background: #fff2f2; }
+  </style>
+</head>
+<body>
+  <h1>Manual Técnico - Golampi Compiler</h1>
+
+  <h2>1. Arquitectura general</h2>
+  <p>
+    El sistema implementa una arquitectura monolítica cliente-servidor. El frontend envía
+    el código al backend PHP y este ejecuta todas las fases del compilador.
+  </p>
+
+  <h2>2. Pipeline del compilador</h2>
+  <ol>
+    <li>Normalización del código fuente.</li>
+    <li>Análisis léxico y sintáctico con ANTLR reutilizado del Proyecto 1.</li>
+    <li>Análisis semántico con visitor propio de Proyecto2.</li>
+    <li>Generación de código ARM64.</li>
+    <li>Escritura de <code>program.s</code>.</li>
+    <li>Ensamblado, enlace y ejecución con QEMU.</li>
+  </ol>
+
+  <h2>3. Uso de ANTLR</h2>
+  <p>
+    Proyecto2 no modifica la gramática. En su lugar, carga los artefactos generados en el
+    Proyecto 1 mediante <code>backend/bootstrap/antlr.php</code>.
+  </p>
+
+  <h2>4. Visitors principales</h2>
+  <table>
+    <tr><th>Archivo</th><th>Responsabilidad</th></tr>
+    <tr><td><code>SemanticVisitor2.php</code></td><td>Tabla de símbolos, scopes, tipos, funciones, built-ins, validación.</td></tr>
+    <tr><td><code>Arm64CodegenVisitor.php</code></td><td>Traducción del árbol ANTLR a ensamblador ARM64.</td></tr>
+  </table>
+
+  <h2>5. Módulos clave</h2>
+  <table>
+    <tr><th>Archivo</th><th>Qué hace</th></tr>
+    <tr><td><code>CompilerPipeline.php</code></td><td>Coordina todas las fases.</td></tr>
+    <tr><td><code>AsmRunner.php</code></td><td>Ensamblado, enlace y ejecución con QEMU.</td></tr>
+    <tr><td><code>RuntimeEmitter.php</code></td><td>Emite helpers ARM64 para runtime.</td></tr>
+    <tr><td><code>TypeRules.php</code></td><td>Reglas semánticas de compatibilidad de tipos.</td></tr>
+  </table>
+
+  <h2>6. Codegen ARM64</h2>
+  <ul>
+    <li>Prólogo y epílogo con <code>x29</code>, <code>x30</code> y manejo explícito de <code>sp</code>.</li>
+    <li>Enteros y booleanos en registros generales.</li>
+    <li><code>float32</code> en registros <code>s0-s31</code>.</li>
+    <li>Strings en <code>.rodata</code> y buffers en <code>.bss</code>.</li>
+    <li>Built-ins con helpers de runtime: impresión, <code>strlen</code>, <code>substr</code>, concatenación y conversión numérica.</li>
+  </ul>
+
+  <h2>7. Ejecución con QEMU</h2>
+  <p>El flujo real es:</p>
+  <pre>aarch64-linux-gnu-as program.s -o program.o
+aarch64-linux-gnu-ld program.o -o program
+qemu-aarch64 -L &lt;sysroot&gt; program</pre>
+
+  <p>
+    El proyecto detecta automáticamente si existe el toolchain del sistema. Si no existe,
+    utiliza el toolchain local ubicado en <code>Proyecto2/toolchain/</code>.
+  </p>
+
+  <h2>8. API de compilación</h2>
+  <p>
+    El endpoint <code>backend/public/compile.php</code> recibe JSON con el campo
+    <code>code</code> y devuelve JSON con:
+  </p>
+  <ul>
+    <li><code>ok</code></li>
+    <li><code>asm</code></li>
+    <li><code>errors</code></li>
+    <li><code>execution</code></li>
+    <li><code>symbolTable</code></li>
+    <li><code>reportErrors</code></li>
+    <li><code>reportSymbols</code></li>
+  </ul>
+
+  <h2>9. Limitaciones actuales detectadas en auditoría</h2>
+  <ul>
+    <li>El valor por defecto runtime de <code>string</code> aún no es seguro en todos los casos.</li>
+    <li>El acceso indexado a arreglos no devuelve el valor esperado en algunas pruebas reales.</li>
+    <li>La mutación por punteros no refleja todavía el cambio esperado en ejecución real.</li>
+  </ul>
+
+  <h2>10. Entregables técnicos</h2>
+  <ul>
+    <li>Auditoría final</li>
+    <li>Manual de usuario</li>
+    <li>Manual técnico</li>
+    <li>Explicación del proyecto</li>
+    <li>Imágenes reales del sistema</li>
+  </ul>
+</body>
+</html>

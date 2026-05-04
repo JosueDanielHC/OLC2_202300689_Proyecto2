@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8"><title>Captura Golampi</title>
+<style>
+body{font-family:Arial,sans-serif;background:#151822;color:#d8def0;margin:0;padding:16px}
+.wrap{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.panel{background:#1e2433;border:1px solid #2d3550;border-radius:8px;padding:12px}
+pre{white-space:pre-wrap;background:#0f1220;border:1px solid #2d3550;border-radius:6px;padding:12px;min-height:250px;overflow:auto}
+h1,h2{margin-top:0;color:#9fc0ff}
+.small pre{min-height:180px}
+</style></head><body>
+<h1>Golampi Compiler</h1>
+<div class="wrap">
+  <section class="panel"><h2>Editor</h2><pre>func addf(a float32, b float32) float32 {
+  return a + b
+}
+
+func main() {
+  x := 3.5
+  y := 2.5
+  fmt.Println(addf(x, y))
+  fmt.Println(true, &quot;Hola&quot;, len(&quot;abc&quot;), substr(&quot;Compilador&quot;, 0, 4), typeOf(10), now())
+}
+</pre></section>
+  <section class="panel"><h2>ARM64 generado</h2><pre>.section .rodata
+bool_true: .asciz &quot;true&quot;
+bool_false: .asciz &quot;false&quot;
+type_int32: .asciz &quot;int32&quot;
+type_bool: .asciz &quot;bool&quot;
+type_string: .asciz &quot;string&quot;
+type_float32: .asciz &quot;float32&quot;
+type_rune: .asciz &quot;rune&quot;
+type_nil: .asciz &quot;nil&quot;
+fixed_now: .asciz &quot;2026-04-14 00:00:00&quot;
+__newline: .ascii &quot;\n&quot;
+__space: .ascii &quot; &quot;
+__dot: .ascii &quot;.&quot;
+__minus: .ascii &quot;-&quot;
+float_const_1000: .float 1000.0
+float_lit_1: .float 3.5
+float_lit_2: .float 2.5
+str_lit_1: .asciz &quot;Hola&quot;
+str_lit_2: .asciz &quot;abc&quot;
+str_lit_3: .asciz &quot;Compilador&quot;
+
+.section .bss
+.align 3
+print_buffer: .skip 128
+substr_buffer: .skip 256
+concat_buffer: .skip 512
+int_buffer: .skip 32
+
+.section .text
+.align 2
+# Runtime ARM64 para salida y cadenas
+.global _start
+_start:
+# Entrada principal del compilador
+bl main
+# Finalizacion del proceso
+mov x0, #0
+mov x8, #93
+svc #0
+
+# Inicio de función addf
+addf:
+stp x29, x30, [sp, #-16]!
+mov x29, sp
+sub sp, sp, #16
+# Guardar parámetro a
+str s0, [x29, #-8]
+# Guardar parámetro b
+str s1, [x29, #-16]
+ldr s0, [x29, #-8]
+fmov s1, s0
+ldr s0, [x29, #-16]
+fadd s0, s1, s0
+b addf_end_1
+addf_end_1:
+add sp, sp, #16
+ldp x29, x30, [sp], #16
+ret
+
+# Inicio de función main
+main:
+stp x29, x30, [sp, #-16]!
+mov x29, sp
+sub sp, sp, #16
+adrp x10, float_lit_1
+add x10, x10, :lo12:float_lit_1
+ldr s0, [x10]
+str s0, [x29, #-8]
+adrp x10, float_lit_2
+add x10, x10, :lo12:float_lit_2
+ldr s0, [x10]
+str s0, [x29, #-16]
+ldr s0, [x29, #-8]
+ldr s0, [x29, #-16]
+fmov s1, s0
+bl addf
+bl __print_float_fixed3
+bl __print_newline
+mov x0, #1
+cmp x0, #0
+b.ne print_bool_true_1
+adrp x0, bool_false
+add x0, x0, :lo12:bool_false
+b print_bool_end_1
+print_bool_true_1:
+adrp x0, bool_true
+add x0, x0, :lo12:bool_true
+print_bool_end_1:
+bl __print_cstr
+bl __print_space
+adrp x0, str_lit_1
+add x0, x0, :lo12:str_lit_1
+bl __print_cstr
+bl __print_space
+adrp x0, str_lit_2
+add x0, x0, :lo12:str_lit_2
+bl __strlen
+bl __itoa
+bl __print_string_slice
+bl __print_space
+adrp x0, str_lit_3
+add x0, x0, :lo12:str_lit_3
+mov x9, x0
+mov x0, #0
+mov x1, x0
+mov x0, #4
+mov x2, x0
+mov x0, x9
+bl __substr
+bl __print_cstr
+bl __print_space
+adrp x0, type_int32
+add x0, x0, :lo12:type_int32
+bl __print_cstr
+bl __print_space
+adrp x0, fixed_now
+add x0, x0, :lo12:fixed_now
+bl __print_cstr
+bl __print_newline
+main_end_1:
+add sp, sp, #16
+ldp x29, x30, [sp], #16
+ret
+
+# write(stdout, x1, x2)
+__write_buffer:
+mov x0, #1
+mov x8, #64
+svc #0
+ret
+
+# strlen(x0) -&gt; x0
+__strlen:
+mov x1, x0
+mov x2, #0
+__strlen_loop:
+ldrb w3, [x1, x2]
+cmp w3, #0
+b.eq __strlen_done
+add x2, x2, #1
+b __strlen_loop
+__strlen_done:
+mov x0, x2
+ret
+
+# itoa(x0) -&gt; x0 ptr, x1 len
+__itoa:
+adrp x9, int_buffer
+add x9, x9, :lo12:int_buffer
+add x10, x9, #31
+mov w11, #0
+strb w11, [x10]
+mov x12, x0
+mov x13, #0
+cmp x12, #0
+b.ge __itoa_positive
+neg x12, x12
+mov x13, #1
+__itoa_positive:
+sub x10, x10, #1
+mov x14, #10
+__itoa_loop:
+udiv x15, x12, x14
+msub x16, x15, x14, x12
+add x16, x16, #48
+strb w16, [x10]
+mov x12, x15
+cmp x12, #0
+b.eq __itoa_digits_done
+sub x10, x10, #1
+b __itoa_loop
+__itoa_digits_done:
+cmp x13, #0
+b.eq __itoa_finish
+sub x10, x10, #1
+mov w16, #45
+strb w16, [x10]
+__itoa_finish:
+mov x0, x10
+adrp x17, int_buffer
+add x17, x17, :lo12:int_buffer
+add x17, x17, #31
+sub x1, x17, x10
+ret
+
+# print zero padded 3 digits from w0
+__print_uint3:
+sub sp, sp, #16
+str x30, [sp]
+adrp x9, print_buffer
+add x9, x9, :lo12:print_buffer
+mov w10, #100
+udiv w11, w0, w10
+msub w12, w11, w10, w0
+mov w10, #10
+udiv w13, w12, w10
+msub w14, w13, w10, w12
+add w11, w11, #48
+add w13, w13, #48
+add w14, w14, #48
+strb w11, [x9]
+strb w13, [x9, #1]
+strb w14, [x9, #2]
+mov x0, x9
+mov x1, #3
+bl __print_string_slice
+ldr x30, [sp]
+add sp, sp, #16
+ret
+
+# print float32 in s0 with 3 decimals
+__print_float_fixed3:
+sub sp, sp, #32
+str x30, [sp]
+str x20, [sp, #8]
+str x21, [sp, #16]
+fcmp s0, #0.0
+b.ge __print_float_positive
+adrp x1, __minus
+add x1, x1, :lo12:__minus
+mov x2, #1
+bl __write_buffer
+fneg s0, s0
+__print_float_positive:
+fcvtzs w20, s0
+fmov s1, s0
+scvtf s2, w20
+fsub s1, s1, s2
+adrp x10, float_const_1000
+add x10, x10, :lo12:float_const_1000
+ldr s2, [x10]
+fmul s1, s1, s2
+fcvtzs w21, s1
+sxtw x0, w20
+bl __itoa
+bl __print_string_slice
+adrp x1, __dot
+add x1, x1, :lo12:__dot
+mov x2, #1
+bl __write_buffer
+mov w0, w21
+bl __print_uint3
+ldr x21, [sp, #16]
+ldr x20, [sp, #8]
+ldr x30, [sp]
+add sp, sp, #32
+ret
+
+# print newline
+__print_newline:
+sub sp, sp, #16
+str x30, [sp]
+adrp x1, __newline
+add x1, x1, :lo12:__newline
+mov x2, #1
+bl __write_buffer
+ldr x30, [sp]
+add sp, sp, #16
+ret
+
+# print single space
+__print_space:
+sub sp, sp, #16
+str x30, [sp]
+adrp x1, __space
+add x1, x1, :lo12:__space
+mov x2, #1
+bl __write_buffer
+ldr x30, [sp]
+add sp, sp, #16
+ret
+
+# print C string pointed by x0
+__print_cstr:
+sub sp, sp, #16
+str x30, [sp]
+mov x9, x0
+bl __strlen
+mov x2, x0
+mov x1, x9
+bl __write_buffer
+ldr x30, [sp]
+add sp, sp, #16
+ret
+
+# x0 ptr, x1 len
+__print_string_slice:
+sub sp, sp, #16
+str x30, [sp]
+mov x2, x1
+mov x1, x0
+bl __write_buffer
+ldr x30, [sp]
+add sp, sp, #16
+ret
+
+# substr(x0 ptr, x1 start, x2 len) -&gt; x0 ptr
+__substr:
+adrp x9, substr_buffer
+add x9, x9, :lo12:substr_buffer
+mov x10, #0
+__substr_skip:
+cmp x10, x1
+b.eq __substr_copy_init
+ldrb w11, [x0, x10]
+cmp w11, #0
+b.eq __substr_done_empty
+add x10, x10, #1
+b __substr_skip
+__substr_copy_init:
+mov x12, #0
+__substr_copy:
+cmp x12, x2
+b.eq __substr_finish
+add x13, x10, x12
+ldrb w14, [x0, x13]
+cmp w14, #0
+b.eq __substr_finish
+strb w14, [x9, x12]
+add x12, x12, #1
+b __substr_copy
+__substr_finish:
+mov w14, #0
+strb w14, [x9, x12]
+mov x0, x9
+ret
+__substr_done_empty:
+mov w14, #0
+strb w14, [x9]
+mov x0, x9
+ret
+
+# concat(x0 left, x1 right) -&gt; x0 ptr
+__concat_strings:
+adrp x9, concat_buffer
+add x9, x9, :lo12:concat_buffer
+mov x10, #0
+__concat_left:
+ldrb w11, [x0, x10]
+cmp w11, #0
+b.eq __concat_right_init
+strb w11, [x9, x10]
+add x10, x10, #1
+b __concat_left
+__concat_right_init:
+mov x12, #0
+__concat_right:
+ldrb w13, [x1, x12]
+cmp w13, #0
+b.eq __concat_finish
+add x14, x10, x12
+strb w13, [x9, x14]
+add x12, x12, #1
+b __concat_right
+__concat_finish:
+add x14, x10, x12
+mov w15, #0
+</pre></section>
+</div>
+<div class="wrap" style="margin-top:16px">
+  <section class="panel small"><h2>Ejecución ARM64 / QEMU</h2><pre>5.000
+true Hola 3 Comp int32 2026-04-14 00:00:00
+</pre></section>
+  <section class="panel small"><h2>Estado del codegen</h2><pre>Compilación exitosa.
+Validación ARM64 ejecutada con QEMU.
+</pre></section>
+</div>
+</body></html>

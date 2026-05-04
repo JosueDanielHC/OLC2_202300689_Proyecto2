@@ -1,0 +1,87 @@
+{
+  "ok": true,
+  "asm": ".section .rodata\nbool_true: .asciz \"true\"\nbool_false: .asciz \"false\"\ntype_int32: .asciz \"int32\"\ntype_bool: .asciz \"bool\"\ntype_string: .asciz \"string\"\ntype_float32: .asciz \"float32\"\ntype_rune: .asciz \"rune\"\ntype_nil: .asciz \"nil\"\nfixed_now: .asciz \"2026-04-14 00:00:00\"\n__newline: .ascii \"\\n\"\n__space: .ascii \" \"\n__dot: .ascii \".\"\n__minus: .ascii \"-\"\nfloat_const_1000: .float 1000.0\nfloat_lit_1: .float 3.5\nfloat_lit_2: .float 2.5\nstr_lit_1: .asciz \"Hola\"\nstr_lit_2: .asciz \"abc\"\nstr_lit_3: .asciz \"Compilador\"\n\n.section .bss\n.align 3\nprint_buffer: .skip 128\nsubstr_buffer: .skip 256\nconcat_buffer: .skip 512\nint_buffer: .skip 32\n\n.section .text\n.align 2\n# Runtime ARM64 para salida y cadenas\n.global _start\n_start:\n# Entrada principal del compilador\nbl main\n# Finalizacion del proceso\nmov x0, #0\nmov x8, #93\nsvc #0\n\n# Inicio de función addf\naddf:\nstp x29, x30, [sp, #-16]!\nmov x29, sp\nsub sp, sp, #16\n# Guardar parámetro a\nstr s0, [x29, #-8]\n# Guardar parámetro b\nstr s1, [x29, #-16]\nldr s0, [x29, #-8]\nfmov s1, s0\nldr s0, [x29, #-16]\nfadd s0, s1, s0\nb addf_end_1\naddf_end_1:\nadd sp, sp, #16\nldp x29, x30, [sp], #16\nret\n\n# Inicio de función main\nmain:\nstp x29, x30, [sp, #-16]!\nmov x29, sp\nsub sp, sp, #16\nadrp x10, float_lit_1\nadd x10, x10, :lo12:float_lit_1\nldr s0, [x10]\nstr s0, [x29, #-8]\nadrp x10, float_lit_2\nadd x10, x10, :lo12:float_lit_2\nldr s0, [x10]\nstr s0, [x29, #-16]\nldr s0, [x29, #-8]\nldr s0, [x29, #-16]\nfmov s1, s0\nbl addf\nbl __print_float_fixed3\nbl __print_newline\nmov x0, #1\ncmp x0, #0\nb.ne print_bool_true_1\nadrp x0, bool_false\nadd x0, x0, :lo12:bool_false\nb print_bool_end_1\nprint_bool_true_1:\nadrp x0, bool_true\nadd x0, x0, :lo12:bool_true\nprint_bool_end_1:\nbl __print_cstr\nbl __print_space\nadrp x0, str_lit_1\nadd x0, x0, :lo12:str_lit_1\nbl __print_cstr\nbl __print_space\nadrp x0, str_lit_2\nadd x0, x0, :lo12:str_lit_2\nbl __strlen\nbl __itoa\nbl __print_string_slice\nbl __print_space\nadrp x0, str_lit_3\nadd x0, x0, :lo12:str_lit_3\nmov x9, x0\nmov x0, #0\nmov x1, x0\nmov x0, #4\nmov x2, x0\nmov x0, x9\nbl __substr\nbl __print_cstr\nbl __print_space\nadrp x0, type_int32\nadd x0, x0, :lo12:type_int32\nbl __print_cstr\nbl __print_space\nadrp x0, fixed_now\nadd x0, x0, :lo12:fixed_now\nbl __print_cstr\nbl __print_newline\nmain_end_1:\nadd sp, sp, #16\nldp x29, x30, [sp], #16\nret\n\n# write(stdout, x1, x2)\n__write_buffer:\nmov x0, #1\nmov x8, #64\nsvc #0\nret\n\n# strlen(x0) -> x0\n__strlen:\nmov x1, x0\nmov x2, #0\n__strlen_loop:\nldrb w3, [x1, x2]\ncmp w3, #0\nb.eq __strlen_done\nadd x2, x2, #1\nb __strlen_loop\n__strlen_done:\nmov x0, x2\nret\n\n# itoa(x0) -> x0 ptr, x1 len\n__itoa:\nadrp x9, int_buffer\nadd x9, x9, :lo12:int_buffer\nadd x10, x9, #31\nmov w11, #0\nstrb w11, [x10]\nmov x12, x0\nmov x13, #0\ncmp x12, #0\nb.ge __itoa_positive\nneg x12, x12\nmov x13, #1\n__itoa_positive:\nsub x10, x10, #1\nmov x14, #10\n__itoa_loop:\nudiv x15, x12, x14\nmsub x16, x15, x14, x12\nadd x16, x16, #48\nstrb w16, [x10]\nmov x12, x15\ncmp x12, #0\nb.eq __itoa_digits_done\nsub x10, x10, #1\nb __itoa_loop\n__itoa_digits_done:\ncmp x13, #0\nb.eq __itoa_finish\nsub x10, x10, #1\nmov w16, #45\nstrb w16, [x10]\n__itoa_finish:\nmov x0, x10\nadrp x17, int_buffer\nadd x17, x17, :lo12:int_buffer\nadd x17, x17, #31\nsub x1, x17, x10\nret\n\n# print zero padded 3 digits from w0\n__print_uint3:\nsub sp, sp, #16\nstr x30, [sp]\nadrp x9, print_buffer\nadd x9, x9, :lo12:print_buffer\nmov w10, #100\nudiv w11, w0, w10\nmsub w12, w11, w10, w0\nmov w10, #10\nudiv w13, w12, w10\nmsub w14, w13, w10, w12\nadd w11, w11, #48\nadd w13, w13, #48\nadd w14, w14, #48\nstrb w11, [x9]\nstrb w13, [x9, #1]\nstrb w14, [x9, #2]\nmov x0, x9\nmov x1, #3\nbl __print_string_slice\nldr x30, [sp]\nadd sp, sp, #16\nret\n\n# print float32 in s0 with 3 decimals\n__print_float_fixed3:\nsub sp, sp, #32\nstr x30, [sp]\nstr x20, [sp, #8]\nstr x21, [sp, #16]\nfcmp s0, #0.0\nb.ge __print_float_positive\nadrp x1, __minus\nadd x1, x1, :lo12:__minus\nmov x2, #1\nbl __write_buffer\nfneg s0, s0\n__print_float_positive:\nfcvtzs w20, s0\nfmov s1, s0\nscvtf s2, w20\nfsub s1, s1, s2\nadrp x10, float_const_1000\nadd x10, x10, :lo12:float_const_1000\nldr s2, [x10]\nfmul s1, s1, s2\nfcvtzs w21, s1\nsxtw x0, w20\nbl __itoa\nbl __print_string_slice\nadrp x1, __dot\nadd x1, x1, :lo12:__dot\nmov x2, #1\nbl __write_buffer\nmov w0, w21\nbl __print_uint3\nldr x21, [sp, #16]\nldr x20, [sp, #8]\nldr x30, [sp]\nadd sp, sp, #32\nret\n\n# print newline\n__print_newline:\nsub sp, sp, #16\nstr x30, [sp]\nadrp x1, __newline\nadd x1, x1, :lo12:__newline\nmov x2, #1\nbl __write_buffer\nldr x30, [sp]\nadd sp, sp, #16\nret\n\n# print single space\n__print_space:\nsub sp, sp, #16\nstr x30, [sp]\nadrp x1, __space\nadd x1, x1, :lo12:__space\nmov x2, #1\nbl __write_buffer\nldr x30, [sp]\nadd sp, sp, #16\nret\n\n# print C string pointed by x0\n__print_cstr:\nsub sp, sp, #16\nstr x30, [sp]\nmov x9, x0\nbl __strlen\nmov x2, x0\nmov x1, x9\nbl __write_buffer\nldr x30, [sp]\nadd sp, sp, #16\nret\n\n# x0 ptr, x1 len\n__print_string_slice:\nsub sp, sp, #16\nstr x30, [sp]\nmov x2, x1\nmov x1, x0\nbl __write_buffer\nldr x30, [sp]\nadd sp, sp, #16\nret\n\n# substr(x0 ptr, x1 start, x2 len) -> x0 ptr\n__substr:\nadrp x9, substr_buffer\nadd x9, x9, :lo12:substr_buffer\nmov x10, #0\n__substr_skip:\ncmp x10, x1\nb.eq __substr_copy_init\nldrb w11, [x0, x10]\ncmp w11, #0\nb.eq __substr_done_empty\nadd x10, x10, #1\nb __substr_skip\n__substr_copy_init:\nmov x12, #0\n__substr_copy:\ncmp x12, x2\nb.eq __substr_finish\nadd x13, x10, x12\nldrb w14, [x0, x13]\ncmp w14, #0\nb.eq __substr_finish\nstrb w14, [x9, x12]\nadd x12, x12, #1\nb __substr_copy\n__substr_finish:\nmov w14, #0\nstrb w14, [x9, x12]\nmov x0, x9\nret\n__substr_done_empty:\nmov w14, #0\nstrb w14, [x9]\nmov x0, x9\nret\n\n# concat(x0 left, x1 right) -> x0 ptr\n__concat_strings:\nadrp x9, concat_buffer\nadd x9, x9, :lo12:concat_buffer\nmov x10, #0\n__concat_left:\nldrb w11, [x0, x10]\ncmp w11, #0\nb.eq __concat_right_init\nstrb w11, [x9, x10]\nadd x10, x10, #1\nb __concat_left\n__concat_right_init:\nmov x12, #0\n__concat_right:\nldrb w13, [x1, x12]\ncmp w13, #0\nb.eq __concat_finish\nadd x14, x10, x12\nstrb w13, [x9, x14]\nadd x12, x12, #1\nb __concat_right\n__concat_finish:\nadd x14, x10, x12\nmov w15, #0\nstrb w15, [x9, x14]\nmov x0, x9\nret\n\n",
+  "errors": [],
+  "codegen": {
+    "limitations": []
+  },
+  "execution": {
+    "available": true,
+    "ok": true,
+    "stdout": "5.000\ntrue Hola 3 Comp int32 2026-04-14 00:00:00\n",
+    "stderr": "",
+    "objectPath": "/home/daniel/Documentos/compi2/golampi-interpreter/Proyecto2/output/asm/program.o",
+    "binaryPath": "/home/daniel/Documentos/compi2/golampi-interpreter/Proyecto2/output/asm/program",
+    "message": "Ejecución completada."
+  },
+  "symbolTable": [
+    {
+      "name": "addf",
+      "type": "float32",
+      "scope": "global",
+      "value": null,
+      "line": 1,
+      "column": 5,
+      "offset": 0,
+      "category": "function"
+    },
+    {
+      "name": "main",
+      "type": "nil",
+      "scope": "global",
+      "value": null,
+      "line": 5,
+      "column": 5,
+      "offset": 0,
+      "category": "function"
+    },
+    {
+      "name": "a",
+      "type": "float32",
+      "scope": "addf",
+      "value": null,
+      "line": 1,
+      "column": 10,
+      "offset": 8,
+      "category": "parameter"
+    },
+    {
+      "name": "b",
+      "type": "float32",
+      "scope": "addf",
+      "value": null,
+      "line": 1,
+      "column": 21,
+      "offset": 16,
+      "category": "parameter"
+    },
+    {
+      "name": "x",
+      "type": "float32",
+      "scope": "main",
+      "value": 3.5,
+      "line": 6,
+      "column": 2,
+      "offset": 8,
+      "category": "variable"
+    },
+    {
+      "name": "y",
+      "type": "float32",
+      "scope": "main",
+      "value": 2.5,
+      "line": 7,
+      "column": 2,
+      "offset": 16,
+      "category": "variable"
+    }
+  ],
+  "reportErrors": "#\tTipo\tDescripción\tLínea\tColumna",
+  "reportSymbols": "Identificador\tTipo\tÁmbito\tValor\tLínea\tColumna\tOffset\naddf\tfloat32\tglobal\t—\t1\t5\t0\nmain\tnil\tglobal\t—\t5\t5\t0\na\tfloat32\taddf\t—\t1\t10\t8\nb\tfloat32\taddf\t—\t1\t21\t16\nx\tfloat32\tmain\t3.5\t6\t2\t8\ny\tfloat32\tmain\t2.5\t7\t2\t16",
+  "downloads": {
+    "asm": "../output/asm/program.s",
+    "errors": "#\tTipo\tDescripción\tLínea\tColumna",
+    "symbols": "Identificador\tTipo\tÁmbito\tValor\tLínea\tColumna\tOffset\naddf\tfloat32\tglobal\t—\t1\t5\t0\nmain\tnil\tglobal\t—\t5\t5\t0\na\tfloat32\taddf\t—\t1\t10\t8\nb\tfloat32\taddf\t—\t1\t21\t16\nx\tfloat32\tmain\t3.5\t6\t2\t8\ny\tfloat32\tmain\t2.5\t7\t2\t16"
+  },
+  "normalizedSource": "func addf(a float32, b float32) float32 {\n  return a + b\n}\n\nfunc main() {\n  x := 3.5\n  y := 2.5\n  fmt.Println(addf(x, y))\n  fmt.Println(true, \"Hola\", len(\"abc\"), substr(\"Compilador\", 0, 4), typeOf(10), now())\n}\n"
+}

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Manual de Usuario - Golampi Compiler</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.5; color: #222; }
+    h1, h2, h3 { color: #123b7a; }
+    code, pre { font-family: Consolas, monospace; }
+    pre { background: #f5f5f5; padding: 12px; border-radius: 6px; }
+    table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+    th { background: #eef3ff; }
+    img { max-width: 100%; margin: 12px 0; border: 1px solid #ccc; }
+  </style>
+</head>
+<body>
+  <h1>Manual de Usuario - Golampi Compiler</h1>
+
+  <h2>1. ¿Qué es este sistema?</h2>
+  <p>
+    Golampi Compiler es una aplicación web que permite escribir código Golampi, compilarlo,
+    generar ensamblador ARM64, ejecutarlo con QEMU y visualizar errores, tabla de símbolos
+    y salida real del programa.
+  </p>
+
+  <h2>2. Requisitos</h2>
+  <ul>
+    <li>PHP 8 o superior.</li>
+    <li>Navegador web moderno.</li>
+    <li>Para ejecución ARM64 real, el proyecto ya incluye un toolchain local en <code>Proyecto2/toolchain/</code>.</li>
+  </ul>
+
+  <h2>3. Cómo iniciar el sistema</h2>
+  <ol>
+    <li>Abrir una terminal en la raíz del repositorio.</li>
+    <li>Ejecutar:</li>
+  </ol>
+  <pre>php -S 0.0.0.0:8000</pre>
+  <ol start="3">
+    <li>Abrir en el navegador: <code>http://localhost:8000/Proyecto2/frontend/index.html</code></li>
+  </ol>
+
+  <h2>4. Cómo usar la GUI</h2>
+  <table>
+    <tr><th>Control</th><th>Uso</th></tr>
+    <tr><td>Nuevo</td><td>Limpia editor y paneles.</td></tr>
+    <tr><td>Cargar archivo</td><td>Permite seleccionar un archivo de código y cargarlo al editor.</td></tr>
+    <tr><td>Guardar código</td><td>Descarga el contenido actual del editor.</td></tr>
+    <tr><td>Compilar</td><td>Envía el código al backend y ejecuta el proceso completo.</td></tr>
+    <tr><td>Limpiar consola</td><td>Borra ensamblador, salida y estado.</td></tr>
+  </table>
+
+  <h2>5. Qué muestra la interfaz</h2>
+  <ul>
+    <li><strong>Editor:</strong> donde se escribe el programa Golampi.</li>
+    <li><strong>ARM64 generado:</strong> muestra el ensamblador producido por el compilador.</li>
+    <li><strong>Ejecución ARM64 / QEMU:</strong> muestra la salida real del binario ejecutado.</li>
+    <li><strong>Estado del codegen:</strong> informa si la compilación fue exitosa o si existen limitaciones.</li>
+  </ul>
+
+  <h2>6. Cómo compilar código</h2>
+  <ol>
+    <li>Escribir o cargar un programa en el editor.</li>
+    <li>Pulsar <strong>Compilar</strong>.</li>
+    <li>Revisar:</li>
+  </ol>
+  <ul>
+    <li>el ensamblador ARM64 generado</li>
+    <li>la ejecución real en QEMU</li>
+    <li>el estado del compilador</li>
+  </ul>
+
+  <h2>7. Reportes descargables</h2>
+  <ul>
+    <li><strong>Errores:</strong> listado tabular de errores léxicos, sintácticos o semánticos.</li>
+    <li><strong>Tabla de símbolos:</strong> identificadores, tipo, ámbito, línea, columna y offset.</li>
+    <li><strong>ARM64:</strong> archivo <code>.s</code> generado por el compilador.</li>
+    <li><strong>Salida:</strong> resultado textual de la ejecución ARM64.</li>
+  </ul>
+
+  <h2>8. Ejemplo de uso</h2>
+  <pre>func main() {
+    fmt.Println(5)
+}</pre>
+  <p>Resultado esperado en la consola de ejecución:</p>
+  <pre>5</pre>
+
+  <h2>9. Capturas</h2>
+  <img src="images/gui_compilador.jpg" alt="GUI del compilador">
+  <img src="images/codigo_entrada.jpg" alt="Código de entrada">
+  <img src="images/salida_consola.jpg" alt="Salida en consola">
+  <img src="images/asm_generado.jpg" alt="Ensamblador generado">
+
+  <h2>10. Observaciones</h2>
+  <p>
+    Si la compilación falla, la interfaz muestra una tabla con errores. Si la ejecución ARM64
+    falla, el mensaje aparece en el panel de ejecución sin romper el resto del pipeline.
+  </p>
+</body>
+</html>

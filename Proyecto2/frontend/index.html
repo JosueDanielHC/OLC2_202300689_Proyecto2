@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Golampi Compiler</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="app">
+    <header class="toolbar">
+      <h1>Golampi Compiler</h1>
+      <div class="toolbar-actions">
+        <button type="button" id="btnNew">Nuevo</button>
+        <button type="button" id="btnLoad">Cargar archivo</button>
+        <button type="button" id="btnSave">Guardar código</button>
+        <button type="button" id="btnCompile" class="primary">Compilar</button>
+        <button type="button" id="btnClearConsole">Limpiar consola</button>
+        <input type="file" id="fileInput" accept=".go,.golampi,.txt" hidden>
+      </div>
+    </header>
+
+    <section class="layout">
+      <section class="panel">
+        <h2>Editor</h2>
+        <textarea id="editor" spellcheck="false" placeholder="func main() {\n    fmt.Println(1 + 2)\n}"></textarea>
+      </section>
+
+      <section class="panel">
+        <h2>ARM64 generado</h2>
+        <div id="console" class="console"></div>
+      </section>
+    </section>
+
+    <section class="layout">
+      <section class="panel">
+        <h2>Ejecución ARM64 / QEMU</h2>
+        <div id="executionConsole" class="console"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Estado del codegen</h2>
+        <div id="statusConsole" class="console"></div>
+      </section>
+    </section>
+
+    <section class="panel reports">
+      <h2>Reportes</h2>
+      <div class="toolbar-actions">
+        <button type="button" id="btnDownloadErrors">Descargar errores</button>
+        <button type="button" id="btnDownloadSymbols">Descargar tabla de símbolos</button>
+        <button type="button" id="btnDownloadAsm">Descargar ARM64</button>
+        <button type="button" id="btnDownloadExecution">Descargar salida</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
