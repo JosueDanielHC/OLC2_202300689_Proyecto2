@@ -9,6 +9,7 @@ Proyecto2/toolchain/downloads/
 Proyecto2/output/asm/*.o
 Proyecto2/output/asm/program
 Proyecto2/output/asm/program.s
+Proyecto2/output/asm/manual_program
 
 # IDE / sistema
 .idea/
