@@ -1,0 +1,294 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Proyecto2\Codegen;
+
+final class RuntimeEmitter
+{
+    public function emitPreamble(AsmBuilder $builder): void
+    {
+        $builder->addComment('Runtime ARM64 para salida y cadenas');
+        $builder->addRodata('bool_true: .asciz "true"');
+        $builder->addRodata('bool_false: .asciz "false"');
+        $builder->addRodata('type_int32: .asciz "int32"');
+        $builder->addRodata('type_bool: .asciz "bool"');
+        $builder->addRodata('type_string: .asciz "string"');
+        $builder->addRodata('type_float32: .asciz "float32"');
+        $builder->addRodata('type_rune: .asciz "rune"');
+        $builder->addRodata('type_nil: .asciz "nil"');
+        $builder->addRodata('fixed_now: .asciz "2026-04-14 00:00:00"');
+        $builder->addRodata('__newline: .ascii "\\n"');
+        $builder->addRodata('__space: .ascii " "');
+        $builder->addRodata('__dot: .ascii "."');
+        $builder->addRodata('__minus: .ascii "-"');
+        $builder->addRodata('float_const_1000: .float 1000.0');
+        $builder->addBss('print_buffer: .skip 128');
+        $builder->addBss('substr_buffer: .skip 256');
+        $builder->addBss('concat_buffer: .skip 512');
+        $builder->addBss('int_buffer: .skip 32');
+    }
+
+    public function emitHelpers(AsmBuilder $builder): void
+    {
+        $builder->addComment('write(stdout, x1, x2)');
+        $builder->addText('__write_buffer:');
+        $builder->addText('mov x0, #1');
+        $builder->addText('mov x8, #64');
+        $builder->addText('svc #0');
+        $builder->addText('ret');
+        $builder->addText('');
+
+        $builder->addComment('strlen(x0) -> x0');
+        $builder->addText('__strlen:');
+        $builder->addText('cbz x0, __strlen_null');
+        $builder->addText('mov x1, x0');
+        $builder->addText('mov x2, #0');
+        $builder->addText('__strlen_loop:');
+        $builder->addText('ldrb w3, [x1, x2]');
+        $builder->addText('cmp w3, #0');
+        $builder->addText('b.eq __strlen_done');
+        $builder->addText('add x2, x2, #1');
+        $builder->addText('b __strlen_loop');
+        $builder->addText('__strlen_null:');
+        $builder->addText('mov x0, #0');
+        $builder->addText('ret');
+        $builder->addText('__strlen_done:');
+        $builder->addText('mov x0, x2');
+        $builder->addText('ret');
+        $builder->addText('');
+
+        $builder->addComment('itoa(x0) -> x0 ptr, x1 len');
+        $builder->addText('__itoa:');
+        $builder->addText('adrp x9, int_buffer');
+        $builder->addText('add x9, x9, :lo12:int_buffer');
+        $builder->addText('add x10, x9, #31');
+        $builder->addText('mov w11, #0');
+        $builder->addText('strb w11, [x10]');
+        $builder->addText('mov x12, x0');
+        $builder->addText('mov x13, #0');
+        $builder->addText('cmp x12, #0');
+        $builder->addText('b.ge __itoa_positive');
+        $builder->addText('neg x12, x12');
+        $builder->addText('mov x13, #1');
+        $builder->addText('__itoa_positive:');
+        $builder->addText('sub x10, x10, #1');
+        $builder->addText('mov x14, #10');
+        $builder->addText('__itoa_loop:');
+        $builder->addText('udiv x15, x12, x14');
+        $builder->addText('msub x16, x15, x14, x12');
+        $builder->addText('add x16, x16, #48');
+        $builder->addText('strb w16, [x10]');
+        $builder->addText('mov x12, x15');
+        $builder->addText('cmp x12, #0');
+        $builder->addText('b.eq __itoa_digits_done');
+        $builder->addText('sub x10, x10, #1');
+        $builder->addText('b __itoa_loop');
+        $builder->addText('__itoa_digits_done:');
+        $builder->addText('cmp x13, #0');
+        $builder->addText('b.eq __itoa_finish');
+        $builder->addText('sub x10, x10, #1');
+        $builder->addText('mov w16, #45');
+        $builder->addText('strb w16, [x10]');
+        $builder->addText('__itoa_finish:');
+        $builder->addText('mov x0, x10');
+        $builder->addText('adrp x17, int_buffer');
+        $builder->addText('add x17, x17, :lo12:int_buffer');
+        $builder->addText('add x17, x17, #31');
+        $builder->addText('sub x1, x17, x10');
+        $builder->addText('ret');
+        $builder->addText('');
+
+        $builder->addComment('print zero padded 3 digits from w0');
+        $builder->addText('__print_uint3:');
+        $builder->addText('sub sp, sp, #16');
+        $builder->addText('str x30, [sp]');
+        $builder->addText('adrp x9, print_buffer');
+        $builder->addText('add x9, x9, :lo12:print_buffer');
+        $builder->addText('mov w10, #100');
+        $builder->addText('udiv w11, w0, w10');
+        $builder->addText('msub w12, w11, w10, w0');
+        $builder->addText('mov w10, #10');
+        $builder->addText('udiv w13, w12, w10');
+        $builder->addText('msub w14, w13, w10, w12');
+        $builder->addText('add w11, w11, #48');
+        $builder->addText('add w13, w13, #48');
+        $builder->addText('add w14, w14, #48');
+        $builder->addText('strb w11, [x9]');
+        $builder->addText('strb w13, [x9, #1]');
+        $builder->addText('strb w14, [x9, #2]');
+        $builder->addText('mov x0, x9');
+        $builder->addText('mov x1, #3');
+        $builder->addText('bl __print_string_slice');
+        $builder->addText('ldr x30, [sp]');
+        $builder->addText('add sp, sp, #16');
+        $builder->addText('ret');
+        $builder->addText('');
+
+        $builder->addComment('print float32 in s0 with 3 decimals');
+        $builder->addText('__print_float_fixed3:');
+        $builder->addText('sub sp, sp, #32');
+        $builder->addText('str x30, [sp]');
+        $builder->addText('str x20, [sp, #8]');
+        $builder->addText('str x21, [sp, #16]');
+        $builder->addText('fcmp s0, #0.0');
+        $builder->addText('b.ge __print_float_positive');
+        $builder->addText('adrp x1, __minus');
+        $builder->addText('add x1, x1, :lo12:__minus');
+        $builder->addText('mov x2, #1');
+        $builder->addText('bl __write_buffer');
+        $builder->addText('fneg s0, s0');
+        $builder->addText('__print_float_positive:');
+        $builder->addText('fcvtzs w20, s0');
+        $builder->addText('fmov s1, s0');
+        $builder->addText('scvtf s2, w20');
+        $builder->addText('fsub s1, s1, s2');
+        $builder->addText('adrp x10, float_const_1000');
+        $builder->addText('add x10, x10, :lo12:float_const_1000');
+        $builder->addText('ldr s2, [x10]');
+        $builder->addText('fmul s1, s1, s2');
+        $builder->addText('fcvtzs w21, s1');
+        $builder->addText('sxtw x0, w20');
+        $builder->addText('bl __itoa');
+        $builder->addText('bl __print_string_slice');
+        $builder->addText('adrp x1, __dot');
+        $builder->addText('add x1, x1, :lo12:__dot');
+        $builder->addText('mov x2, #1');
+        $builder->addText('bl __write_buffer');
+        $builder->addText('mov w0, w21');
+        $builder->addText('bl __print_uint3');
+        $builder->addText('ldr x21, [sp, #16]');
+        $builder->addText('ldr x20, [sp, #8]');
+        $builder->addText('ldr x30, [sp]');
+        $builder->addText('add sp, sp, #32');
+        $builder->addText('ret');
+        $builder->addText('');
+
+        $builder->addComment('print newline');
+        $builder->addText('__print_newline:');
+        $builder->addText('sub sp, sp, #16');
+        $builder->addText('str x30, [sp]');
+        $builder->addText('adrp x1, __newline');
+        $builder->addText('add x1, x1, :lo12:__newline');
+        $builder->addText('mov x2, #1');
+        $builder->addText('bl __write_buffer');
+        $builder->addText('ldr x30, [sp]');
+        $builder->addText('add sp, sp, #16');
+        $builder->addText('ret');
+        $builder->addText('');
+
+        $builder->addComment('print single space');
+        $builder->addText('__print_space:');
+        $builder->addText('sub sp, sp, #16');
+        $builder->addText('str x30, [sp]');
+        $builder->addText('adrp x1, __space');
+        $builder->addText('add x1, x1, :lo12:__space');
+        $builder->addText('mov x2, #1');
+        $builder->addText('bl __write_buffer');
+        $builder->addText('ldr x30, [sp]');
+        $builder->addText('add sp, sp, #16');
+        $builder->addText('ret');
+        $builder->addText('');
+
+        $builder->addComment('print C string pointed by x0');
+        $builder->addText('__print_cstr:');
+        $builder->addText('sub sp, sp, #16');
+        $builder->addText('str x30, [sp]');
+        $builder->addText('mov x9, x0');
+        $builder->addText('bl __strlen');
+        $builder->addText('mov x2, x0');
+        $builder->addText('mov x1, x9');
+        $builder->addText('bl __write_buffer');
+        $builder->addText('ldr x30, [sp]');
+        $builder->addText('add sp, sp, #16');
+        $builder->addText('ret');
+        $builder->addText('');
+
+        $builder->addComment('x0 ptr, x1 len');
+        $builder->addText('__print_string_slice:');
+        $builder->addText('sub sp, sp, #16');
+        $builder->addText('str x30, [sp]');
+        $builder->addText('mov x2, x1');
+        $builder->addText('mov x1, x0');
+        $builder->addText('bl __write_buffer');
+        $builder->addText('ldr x30, [sp]');
+        $builder->addText('add sp, sp, #16');
+        $builder->addText('ret');
+        $builder->addText('');
+
+        $builder->addComment('substr(x0 ptr, x1 start, x2 len) -> x0 ptr');
+        $builder->addText('__substr:');
+        $builder->addText('adrp x9, substr_buffer');
+        $builder->addText('add x9, x9, :lo12:substr_buffer');
+        $builder->addText('mov x10, #0');
+        $builder->addText('__substr_skip:');
+        $builder->addText('cmp x10, x1');
+        $builder->addText('b.eq __substr_copy_init');
+        $builder->addText('ldrb w11, [x0, x10]');
+        $builder->addText('cmp w11, #0');
+        $builder->addText('b.eq __substr_done_empty');
+        $builder->addText('add x10, x10, #1');
+        $builder->addText('b __substr_skip');
+        $builder->addText('__substr_copy_init:');
+        $builder->addText('mov x12, #0');
+        $builder->addText('__substr_copy:');
+        $builder->addText('cmp x12, x2');
+        $builder->addText('b.eq __substr_finish');
+        $builder->addText('add x13, x10, x12');
+        $builder->addText('ldrb w14, [x0, x13]');
+        $builder->addText('cmp w14, #0');
+        $builder->addText('b.eq __substr_finish');
+        $builder->addText('strb w14, [x9, x12]');
+        $builder->addText('add x12, x12, #1');
+        $builder->addText('b __substr_copy');
+        $builder->addText('__substr_finish:');
+        $builder->addText('mov w14, #0');
+        $builder->addText('strb w14, [x9, x12]');
+        $builder->addText('mov x0, x9');
+        $builder->addText('ret');
+        $builder->addText('__substr_done_empty:');
+        $builder->addText('mov w14, #0');
+        $builder->addText('strb w14, [x9]');
+        $builder->addText('mov x0, x9');
+        $builder->addText('ret');
+        $builder->addText('');
+
+        $builder->addComment('concat(x0 left, x1 right) -> x0 ptr');
+        $builder->addText('__concat_strings:');
+        $builder->addText('adrp x9, concat_buffer');
+        $builder->addText('add x9, x9, :lo12:concat_buffer');
+        $builder->addText('mov x10, #0');
+        $builder->addText('__concat_left:');
+        $builder->addText('ldrb w11, [x0, x10]');
+        $builder->addText('cmp w11, #0');
+        $builder->addText('b.eq __concat_right_init');
+        $builder->addText('strb w11, [x9, x10]');
+        $builder->addText('add x10, x10, #1');
+        $builder->addText('b __concat_left');
+        $builder->addText('__concat_right_init:');
+        $builder->addText('mov x12, #0');
+        $builder->addText('__concat_right:');
+        $builder->addText('ldrb w13, [x1, x12]');
+        $builder->addText('cmp w13, #0');
+        $builder->addText('b.eq __concat_finish');
+        $builder->addText('add x14, x10, x12');
+        $builder->addText('strb w13, [x9, x14]');
+        $builder->addText('add x12, x12, #1');
+        $builder->addText('b __concat_right');
+        $builder->addText('__concat_finish:');
+        $builder->addText('add x14, x10, x12');
+        $builder->addText('mov w15, #0');
+        $builder->addText('strb w15, [x9, x14]');
+        $builder->addText('mov x0, x9');
+        $builder->addText('ret');
+        $builder->addText('');
+    }
+
+    public function emitExitSequence(AsmBuilder $builder): void
+    {
+        $builder->addComment('Finalizacion del proceso');
+        $builder->addText('mov x0, #0');
+        $builder->addText('mov x8, #93');
+        $builder->addText('svc #0');
+    }
+}
