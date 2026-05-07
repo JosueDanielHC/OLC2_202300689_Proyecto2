@@ -633,6 +633,21 @@ final class SemanticVisitor2 extends \GolampiBaseVisitor
         }
 
         $acc = $this->inferLogicalOr($context->logicalOr());
+        if ($this->hasTernary($context)) {
+            $branches = $this->ternaryBranches($context);
+            $whenTrue = $branches[0] ?? null;
+            $whenFalse = $branches[1] ?? null;
+
+            if ($acc->name !== Type::BOOL) {
+                $this->addError('Semántico', $context, 'La condición del operador ternario debe ser bool.');
+                $acc = Type::invalid();
+            }
+
+            $trueType = $this->inferExpressionType($whenTrue);
+            $falseType = $this->inferExpressionType($whenFalse);
+            $acc = $this->resolveTernaryResultType($context, $trueType, $falseType);
+        }
+
         foreach ($this->normalizeList($context->functionCall(null)) as $call) {
             $returns = $this->inferFunctionCallReturnTypes($call, $acc);
             $acc = $returns[0] ?? Type::invalid();
@@ -647,6 +662,37 @@ final class SemanticVisitor2 extends \GolampiBaseVisitor
     private function expressionPipeCalls(\Context\ExpressionContext $context): array
     {
         return $this->normalizeList($context->functionCall(null));
+    }
+
+    /**
+     * @return array{0:?\Context\ExpressionContext,1:?\Context\ExpressionContext}
+     */
+    private function ternaryBranches(\Context\ExpressionContext $context): array
+    {
+        $parts = $this->normalizeList($context->expression(null));
+        return [$parts[0] ?? null, $parts[1] ?? null];
+    }
+
+    private function hasTernary(\Context\ExpressionContext $context): bool
+    {
+        return count($this->normalizeList($context->expression(null))) === 2;
+    }
+
+    private function resolveTernaryResultType(\Context\ExpressionContext $context, Type $left, Type $right): Type
+    {
+        if (TypeRules::assignmentAllowed($left, $right)) {
+            return $left;
+        }
+        if (TypeRules::assignmentAllowed($right, $left)) {
+            return $right;
+        }
+
+        $this->addError(
+            'Semántico',
+            $context,
+            "Las ramas del ternario no son compatibles: '{$left}' y '{$right}'."
+        );
+        return Type::invalid();
     }
 
     private function inferLogicalOr(?\Context\LogicalOrContext $context): Type
@@ -892,6 +938,9 @@ final class SemanticVisitor2 extends \GolampiBaseVisitor
         }
 
         $type = $symbol->type;
+        if ($type->isPointer() && $type->pointedType !== null) {
+            $type = $type->pointedType;
+        }
         foreach ($this->normalizeList($context->expression(null)) as $indexExpr) {
             $indexType = $this->inferExpressionType($indexExpr);
             if ($indexType->name !== Type::INT32) {
@@ -1057,7 +1106,7 @@ final class SemanticVisitor2 extends \GolampiBaseVisitor
 
     private function isAssignableExpression(\Context\ExpressionContext $context): bool
     {
-        if ($this->expressionPipeCalls($context) !== []) {
+        if ($this->expressionPipeCalls($context) !== [] || $this->hasTernary($context)) {
             return false;
         }
 
@@ -1079,7 +1128,7 @@ final class SemanticVisitor2 extends \GolampiBaseVisitor
 
     private function symbolFromExpression(\Context\ExpressionContext $context): ?Symbol
     {
-        if ($this->expressionPipeCalls($context) !== []) {
+        if ($this->expressionPipeCalls($context) !== [] || $this->hasTernary($context)) {
             return null;
         }
 
@@ -1150,7 +1199,7 @@ final class SemanticVisitor2 extends \GolampiBaseVisitor
 
     private function extractFunctionCall(\Context\ExpressionContext $context): ?\Context\FunctionCallContext
     {
-        if ($this->expressionPipeCalls($context) !== []) {
+        if ($this->expressionPipeCalls($context) !== [] || $this->hasTernary($context)) {
             return null;
         }
 
@@ -1164,7 +1213,7 @@ final class SemanticVisitor2 extends \GolampiBaseVisitor
             return null;
         }
 
-        if ($this->expressionPipeCalls($context) !== []) {
+        if ($this->expressionPipeCalls($context) !== [] || $this->hasTernary($context)) {
             return null;
         }
 

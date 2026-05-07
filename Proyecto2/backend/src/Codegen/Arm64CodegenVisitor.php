@@ -206,11 +206,25 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
 
             $register = 'x' . $index;
             $this->builder->addComment("Guardar parámetro {$parameterName}");
-            if ($symbol->type->name === Type::FLOAT32) {
+            if ($symbol->type->isArray()) {
+                $bytes = max(8, $symbol->type->sizeInBytes());
+                $this->emitMemcpyFromPointerRegToStack($register, $symbol->stackOffset, $bytes);
+            } elseif ($symbol->type->name === Type::FLOAT32) {
                 $this->builder->addText("str s{$index}, [x29, #-{$symbol->stackOffset}]");
             } else {
                 $this->builder->addText("str {$register}, [x29, #-{$symbol->stackOffset}]");
             }
+        }
+    }
+
+    private function emitMemcpyFromPointerRegToStack(string $srcPointerReg, int $destStackOffset, int $bytes): void
+    {
+        $words = (int) ceil($bytes / 8);
+        $this->builder->addText("sub x15, x29, #{$destStackOffset}");
+        for ($i = 0; $i < $words; $i++) {
+            $off = $i * 8;
+            $this->builder->addText("ldr x14, [{$srcPointerReg}, #{$off}]");
+            $this->builder->addText("str x14, [x15, #{$off}]");
         }
     }
 
@@ -229,6 +243,8 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
             $this->emitShortVarDecl($statement->shortVarDecl());
         } elseif ($statement->assignment() !== null) {
             $this->emitAssignment($statement->assignment());
+        } elseif ($statement->incDecStmt() !== null) {
+            $this->emitIncDec($statement->incDecStmt()->expression(), $statement->incDecStmt()->getText());
         } elseif ($statement->ifStmt() !== null) {
             $this->emitIfStmt($statement->ifStmt(), $functionEndLabel);
         } elseif ($statement->forStmt() !== null) {
@@ -278,6 +294,13 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
 
             $expression = $expressions[$index] ?? null;
             if ($symbol->type->isArray()) {
+                $fcInit = $expression !== null ? $this->extractFunctionCall($expression) : null;
+                $fnInit = $fcInit !== null ? $this->model->function($fcInit->qualifiedIdentifier()?->getText() ?? '') : null;
+                if ($fnInit !== null && count($fnInit->returnTypes) === 1 && $fnInit->returnTypes[0]->equals($symbol->type)) {
+                    $this->emitFunctionCall($fcInit);
+                    $this->storeArrayValueFromRegisters($symbol, $symbol->type);
+                    continue;
+                }
                 $this->emitArrayVariableInitialization($symbol, $expression);
                 continue;
             }
@@ -298,6 +321,42 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
     {
         $identifiers = $this->normalizeList($context->identifierList()?->IDENTIFIER(null));
         $expressions = $this->normalizeList($context->expressionList()?->expression(null));
+
+        if (count($identifiers) === 1 && count($expressions) === 1) {
+            $symbol0 = $this->resolveCurrentFunctionSymbol($identifiers[0]->getText());
+            $call0 = $this->extractFunctionCall($expressions[0]);
+            if ($symbol0 !== null && $symbol0->type->isArray() && $call0 !== null) {
+                $fname = $call0->qualifiedIdentifier()?->getText() ?? '';
+                $fn0 = $this->model->function($fname);
+                if ($fn0 !== null && count($fn0->returnTypes) === 1 && $fn0->returnTypes[0]->equals($symbol0->type)) {
+                    $this->emitFunctionCall($call0);
+                    $this->storeArrayValueFromRegisters($symbol0, $symbol0->type);
+                    return;
+                }
+            }
+        }
+
+        if (count($identifiers) > 1 && count($expressions) === 1) {
+            $call = $this->extractFunctionCall($expressions[0]);
+            if ($call !== null) {
+                $name = $call->qualifiedIdentifier()?->getText() ?? '';
+                $fn = $this->model->function($name);
+                if ($fn !== null && count($fn->returnTypes) === count($identifiers)) {
+                    $this->emitFunctionCall($call);
+                    foreach ($identifiers as $index => $identifier) {
+                        $symbol = $this->resolveCurrentFunctionSymbol($identifier->getText());
+                        if ($symbol === null) {
+                            continue;
+                        }
+                        if ($index > 0) {
+                            $this->builder->addText("mov x0, x{$index}");
+                        }
+                        $this->storeExpressionResult($symbol);
+                    }
+                    return;
+                }
+            }
+        }
 
         foreach ($identifiers as $index => $identifier) {
             if (!isset($expressions[$index])) {
@@ -323,13 +382,16 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
         $source = $context->expression(1);
         $operator = $context->assignOp()?->getText() ?? '=';
         $symbol = $target !== null ? $this->symbolFromExpression($target) : null;
+        $pointerSymbol = $target !== null ? $this->symbolFromPointerAssignmentTarget($target) : null;
 
-        if ($target === null || $source === null || $symbol === null) {
+        if ($target !== null && $source !== null && $this->isPointerAssignment($target)) {
+            if ($pointerSymbol !== null) {
+                $this->emitPointerAssignment($target, $source, $pointerSymbol, $operator);
+            }
             return;
         }
 
-        if ($this->isPointerAssignment($target)) {
-            $this->registerLimitation('La escritura por punteros aun no esta soportada en runtime ARM64; se bloquea para evitar resultados incorrectos.');
+        if ($target === null || $source === null || $symbol === null) {
             return;
         }
 
@@ -555,7 +617,27 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
     private function emitReturnStmt(\Context\ReturnStmtContext $context, string $functionEndLabel): void
     {
         $expressions = $context->expressionList() !== null ? $this->normalizeList($context->expressionList()->expression(null)) : [];
-        if (isset($expressions[0])) {
+        if (count($expressions) > 1) {
+            for ($i = count($expressions) - 1; $i >= 0; $i--) {
+                $expr = $expressions[$i];
+                $this->emitExpression($expr);
+                $rt = $this->currentFunction?->returnTypes[$i] ?? null;
+                if ($rt?->name === Type::FLOAT32 && $this->typeOfExpression($expr)->name !== Type::FLOAT32) {
+                    $this->builder->addText('scvtf s0, w0');
+                }
+                if ($i > 0) {
+                    if ($rt?->name === Type::FLOAT32) {
+                        $this->builder->addText("fmov s{$i}, s0");
+                    } else {
+                        $this->builder->addText("mov x{$i}, x0");
+                    }
+                }
+            }
+        } elseif (isset($expressions[0])) {
+            if ($this->currentFunction?->type->isArray() && $this->emitReturnArrayInRegisters($expressions[0], $this->currentFunction->type)) {
+                $this->builder->addText("b {$functionEndLabel}");
+                return;
+            }
             $this->emitExpression($expressions[0]);
             if ($this->currentFunction?->type->name === Type::FLOAT32 && $this->typeOfExpression($expressions[0])->name !== Type::FLOAT32) {
                 $this->builder->addText('scvtf s0, w0');
@@ -577,25 +659,32 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
         } elseif ($context->expressionStmt() !== null) {
             $this->emitExpressionStmt($context->expressionStmt());
         } elseif ($context->incDecStmt() !== null) {
-            $expr = $context->incDecStmt()->expression();
-            $symbol = $expr !== null ? $this->symbolFromExpression($expr) : null;
-            if ($symbol !== null) {
-                if ($symbol->type->name === Type::FLOAT32) {
-                    $this->loadSymbolValue($symbol);
-                    $oneLabel = $this->internFloatLiteral('1.0');
-                    $this->builder->addText("adrp x10, {$oneLabel}");
-                    $this->builder->addText("add x10, x10, :lo12:{$oneLabel}");
-                    $this->builder->addText('ldr s1, [x10]');
-                    $instruction = str_contains($context->incDecStmt()->getText(), '++') ? 'fadd' : 'fsub';
-                    $this->builder->addText("{$instruction} s0, s0, s1");
-                } else {
-                    $this->loadSymbolToX0($symbol);
-                    $instruction = str_contains($context->incDecStmt()->getText(), '++') ? 'add' : 'sub';
-                    $this->builder->addText("{$instruction} x0, x0, #1");
-                }
-                $this->storeExpressionResult($symbol);
-            }
+            $this->emitIncDec($context->incDecStmt()->expression(), $context->incDecStmt()->getText());
         }
+    }
+
+    private function emitIncDec(?\Context\ExpressionContext $expr, string $rawText): void
+    {
+        $symbol = $expr !== null ? $this->symbolFromExpression($expr) : null;
+        if ($symbol === null) {
+            return;
+        }
+
+        if ($symbol->type->name === Type::FLOAT32) {
+            $this->loadSymbolValue($symbol);
+            $oneLabel = $this->internFloatLiteral('1.0');
+            $this->builder->addText("adrp x10, {$oneLabel}");
+            $this->builder->addText("add x10, x10, :lo12:{$oneLabel}");
+            $this->builder->addText('ldr s1, [x10]');
+            $instruction = str_contains($rawText, '++') ? 'fadd' : 'fsub';
+            $this->builder->addText("{$instruction} s0, s0, s1");
+        } else {
+            $this->loadSymbolToX0($symbol);
+            $instruction = str_contains($rawText, '++') ? 'add' : 'sub';
+            $this->builder->addText("{$instruction} x0, x0, #1");
+        }
+
+        $this->storeExpressionResult($symbol);
     }
 
     private function emitExpression(?\Context\ExpressionContext $context): void
@@ -606,7 +695,33 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
         }
 
         $accType = $this->typeOfLogicalOr($context->logicalOr());
-        $this->emitLogicalOr($context->logicalOr());
+        if ($this->hasTernary($context)) {
+            [$whenTrue, $whenFalse] = $this->ternaryBranches($context);
+            $trueType = $this->typeOfExpression($whenTrue);
+            $falseType = $this->typeOfExpression($whenFalse);
+            $resultType = $this->resolveTernaryResultType($trueType, $falseType);
+
+            $falseLabel = $this->labels->next('tern_false');
+            $endLabel = $this->labels->next('tern_end');
+            $this->emitLogicalOr($context->logicalOr());
+            $this->builder->addText('cmp x0, #0');
+            $this->builder->addText("b.eq {$falseLabel}");
+            $this->emitExpression($whenTrue);
+            if ($resultType->name === Type::FLOAT32 && $trueType->name !== Type::FLOAT32) {
+                $this->builder->addText('scvtf s0, w0');
+            }
+            $this->builder->addText("b {$endLabel}");
+            $this->builder->addText($falseLabel . ':');
+            $this->emitExpression($whenFalse);
+            if ($resultType->name === Type::FLOAT32 && $falseType->name !== Type::FLOAT32) {
+                $this->builder->addText('scvtf s0, w0');
+            }
+            $this->builder->addText($endLabel . ':');
+            $accType = $resultType;
+        } else {
+            $this->emitLogicalOr($context->logicalOr());
+        }
+
         foreach ($this->normalizeList($context->functionCall(null)) as $call) {
             $this->emitFunctionCall($call, $accType);
             $accType = $this->typeOfFunctionCallResult($call);
@@ -782,9 +897,9 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
             $operator = $context->getChild(($index * 2) - 1)?->getText() ?? '+';
             $rightType = $this->typeOfMultiplication($parts[$index]);
             if ($currentType->name === Type::FLOAT32) {
-                $this->builder->addText('fmov s1, s0');
+                $this->preserveFloat32ForRhsEval();
             } else {
-                $this->builder->addText('mov x9, x0');
+                $this->preserveInt64ForRhsEval();
             }
             $this->emitMultiplication($parts[$index]);
 
@@ -799,7 +914,10 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
             $resultType = TypeRules::arithmeticResult($operator, $currentType, $rightType);
             if ($resultType?->name === Type::FLOAT32) {
                 if ($currentType->name !== Type::FLOAT32) {
+                    $this->restoreInt64FromSpToX9();
                     $this->builder->addText('scvtf s1, w9');
+                } else {
+                    $this->restoreFloat32FromSpToS1();
                 }
                 if ($rightType->name !== Type::FLOAT32) {
                     $this->builder->addText('scvtf s0, w0');
@@ -811,6 +929,7 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
             }
 
             $instruction = $operator === '-' ? 'sub' : 'add';
+            $this->restoreInt64FromSpToX9();
             $this->builder->addText("{$instruction} x0, x9, x0");
             $currentType = $resultType ?? Type::int32();
         }
@@ -830,13 +949,14 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
             $operator = $context->getChild(($index * 2) - 1)?->getText() ?? '*';
             $rightType = $this->typeOfUnary($parts[$index]);
             if ($currentType->name === Type::FLOAT32) {
-                $this->builder->addText('fmov s1, s0');
+                $this->preserveFloat32ForRhsEval();
             } else {
-                $this->builder->addText('mov x9, x0');
+                $this->preserveInt64ForRhsEval();
             }
             $this->emitUnary($parts[$index]);
 
             if ($operator === '%') {
+                $this->restoreInt64FromSpToX9();
                 $this->emitModuloSequence('x9', 'x0');
                 $currentType = Type::int32();
                 continue;
@@ -845,7 +965,10 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
             $resultType = TypeRules::arithmeticResult($operator, $currentType, $rightType);
             if ($resultType?->name === Type::FLOAT32) {
                 if ($currentType->name !== Type::FLOAT32) {
+                    $this->restoreInt64FromSpToX9();
                     $this->builder->addText('scvtf s1, w9');
+                } else {
+                    $this->restoreFloat32FromSpToS1();
                 }
                 if ($rightType->name !== Type::FLOAT32) {
                     $this->builder->addText('scvtf s0, w0');
@@ -857,6 +980,7 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
             }
 
             $instruction = $operator === '/' ? 'sdiv' : 'mul';
+            $this->restoreInt64FromSpToX9();
             $this->builder->addText("{$instruction} x0, x9, x0");
             $currentType = $resultType ?? Type::int32();
         }
@@ -875,6 +999,11 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
         }
 
         $operator = $context->getChild(0)?->getText() ?? '';
+        if ($operator === '&') {
+            $this->emitAddressOfUnary($context->unary());
+            return;
+        }
+
         $this->emitUnary($context->unary());
 
         if ($operator === '-') {
@@ -893,6 +1022,63 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
             $this->builder->addText($trueLabel . ':');
             $this->builder->addText('mov x0, #1');
             $this->builder->addText($endLabel . ':');
+        } elseif ($operator === '*') {
+            $pointed = $this->typeOfUnary($context->unary());
+            if ($pointed->name === Type::FLOAT32) {
+                $this->builder->addText('ldr s0, [x0]');
+            } elseif (!$pointed->isInvalid()) {
+                $this->builder->addText('ldr x0, [x0]');
+            }
+        }
+    }
+
+    private function emitAddressOfUnary(?\Context\UnaryContext $context): void
+    {
+        if ($context === null) {
+            $this->builder->addText('mov x0, #0');
+            return;
+        }
+
+        if ($context->primary()?->qualifiedIdentifier() !== null) {
+            $name = $context->primary()->qualifiedIdentifier()->getText();
+            $symbol = $this->resolveCurrentFunctionSymbol($name);
+            if ($symbol === null) {
+                $this->builder->addText('mov x0, #0');
+                return;
+            }
+            if ($symbol->storage === 'global') {
+                $this->builder->addText("adrp x0, {$symbol->name}");
+                $this->builder->addText("add x0, x0, :lo12:{$symbol->name}");
+                return;
+            }
+            if ($symbol->stackOffset !== null) {
+                $this->builder->addText("sub x0, x29, #{$symbol->stackOffset}");
+                return;
+            }
+            $this->builder->addText('mov x0, #0');
+            return;
+        }
+
+        if ($context->primary()?->arrayAccess() !== null) {
+            $access = $context->primary()->arrayAccess();
+            $baseName = $access->qualifiedIdentifier()->getText();
+            $symbol = $this->resolveCurrentFunctionSymbol($baseName);
+            if ($symbol === null) {
+                $this->builder->addText('mov x0, #0');
+                return;
+            }
+
+            $indices = $this->normalizeList($access->expression(null));
+            $baseType = $symbol->type->isPointer() && $symbol->type->pointedType !== null
+                ? $symbol->type->pointedType
+                : $symbol->type;
+            $elementType = $this->indexedElementType($baseType, count($indices));
+            if ($elementType->isInvalid()) {
+                $this->builder->addText('mov x0, #0');
+                return;
+            }
+            $this->computeArrayElementAddress($symbol, $indices, $baseType);
+            $this->builder->addText('mov x0, x11');
         }
     }
 
@@ -1034,6 +1220,7 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
             return;
         }
 
+        $fn = $this->model->function($name);
         $explicitCount = count($arguments);
         if ($leadingArgType !== null && $explicitCount > 0) {
             if ($leadingArgType->name === Type::FLOAT32) {
@@ -1043,13 +1230,19 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
             }
         }
 
-        foreach ($arguments as $index => $argument) {
+        for ($index = $explicitCount - 1; $index >= 0; $index--) {
+            $argument = $arguments[$index];
             $paramSlot = $leadingArgType !== null ? $index + 1 : $index;
             if ($paramSlot > 7) {
                 break;
             }
+            $paramType = $fn?->parameterTypes[$paramSlot] ?? null;
+            $argType = $this->typeOfExpression($argument);
+            if ($paramType?->isArray() && $argType->isArray() && $this->tryEmitArrayArgumentAddress($argument, $paramSlot)) {
+                continue;
+            }
             $this->emitExpression($argument);
-            $type = $this->typeOfExpression($argument);
+            $type = $argType;
             if ($type->name === Type::FLOAT32) {
                 if ($paramSlot !== 0) {
                     $this->builder->addText('fmov s' . $paramSlot . ', s0');
@@ -1275,18 +1468,33 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
     private function emitArrayElementAssignment(\Context\ArrayAccessContext $arrayAccess, Symbol $symbol, \Context\ExpressionContext $source): void
     {
         $indices = $this->normalizeList($arrayAccess->expression(null));
-        if (count($indices) !== 1) {
-            $this->registerLimitation('Los arreglos multidimensionales aun no tienen codegen completo; solo se soporta acceso lineal de un indice.');
+
+        $baseType = $symbol->type->isPointer() && $symbol->type->pointedType !== null
+            ? $symbol->type->pointedType
+            : $symbol->type;
+        $targetType = $this->indexedElementType($baseType, count($indices));
+        if ($targetType->isInvalid()) {
+            $this->builder->addText('mov x0, #0');
             return;
         }
-
         $elementType = $this->typeOfPrimary($this->extractPrimary($source));
         $this->emitExpression($source);
-        $this->computeArrayElementAddress($symbol, $indices[0], $symbol->type->elementType ?? $elementType);
+        $storeAsFloat = ($targetType->isInvalid() ? $elementType : $targetType)->name === Type::FLOAT32;
+        $this->builder->addText('sub sp, sp, #16');
+        if ($storeAsFloat) {
+            $this->builder->addText('str s0, [sp]');
+        } else {
+            $this->builder->addText('str x0, [sp]');
+        }
+        $this->computeArrayElementAddress($symbol, $indices, $baseType);
 
-        if (($symbol->type->elementType ?? $elementType)->name === Type::FLOAT32) {
+        if ($storeAsFloat) {
+            $this->builder->addText('ldr s0, [sp]');
+            $this->builder->addText('add sp, sp, #16');
             $this->builder->addText('str s0, [x11]');
         } else {
+            $this->builder->addText('ldr x0, [sp]');
+            $this->builder->addText('add sp, sp, #16');
             $this->builder->addText('str x0, [x11]');
         }
     }
@@ -1294,14 +1502,15 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
     private function emitArrayAccessValue(\Context\ArrayAccessContext $arrayAccess, Symbol $symbol): void
     {
         $indices = $this->normalizeList($arrayAccess->expression(null));
-        if (count($indices) !== 1) {
-            $this->registerLimitation('Los arreglos multidimensionales aun no tienen codegen completo; solo se soporta acceso lineal de un indice.');
+        $baseType = $symbol->type->isPointer() && $symbol->type->pointedType !== null
+            ? $symbol->type->pointedType
+            : $symbol->type;
+        $elementType = $this->indexedElementType($baseType, count($indices));
+        if ($elementType->isInvalid()) {
             $this->builder->addText('mov x0, #0');
             return;
         }
-
-        $elementType = $symbol->type->elementType ?? Type::int32();
-        $this->computeArrayElementAddress($symbol, $indices[0], $elementType);
+        $this->computeArrayElementAddress($symbol, $indices, $baseType);
         if ($elementType->name === Type::FLOAT32) {
             $this->builder->addText('ldr s0, [x11]');
         } else {
@@ -1309,9 +1518,37 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
         }
     }
 
-    private function computeArrayElementAddress(Symbol $symbol, \Context\ExpressionContext $indexExpr, Type $elementType): void
+    private function computeArrayElementAddress(Symbol $symbol, array $indices, Type $arrayType): void
     {
-        if ($symbol->storage === 'global') {
+        $this->builder->addText('sub sp, sp, #16');
+        $this->builder->addText('str xzr, [sp]');
+
+        $currentType = $arrayType;
+        foreach ($indices as $indexExpr) {
+            if (!$currentType->isArray() || $currentType->elementType === null) {
+                break;
+            }
+            $this->emitExpression($indexExpr);
+            $strideBytes = max(8, $currentType->elementType->sizeInBytes());
+            $this->builder->addText("mov x12, #{$strideBytes}");
+            $this->builder->addText('mul x14, x0, x12');
+            $this->builder->addText('ldr x13, [sp]');
+            $this->builder->addText('add x13, x13, x14');
+            $this->builder->addText('str x13, [sp]');
+            $currentType = $currentType->elementType;
+        }
+
+        if ($symbol->type->isPointer() && $symbol->type->pointedType?->isArray()) {
+            if ($symbol->storage === 'global') {
+                $this->builder->addText("adrp x10, {$symbol->name}");
+                $this->builder->addText("add x10, x10, :lo12:{$symbol->name}");
+                $this->builder->addText('ldr x10, [x10]');
+            } elseif ($symbol->stackOffset !== null) {
+                $this->builder->addText("ldr x10, [x29, #-{$symbol->stackOffset}]");
+            } else {
+                $this->builder->addText('mov x10, xzr');
+            }
+        } elseif ($symbol->storage === 'global') {
             $this->builder->addText("adrp x10, {$symbol->name}");
             $this->builder->addText("add x10, x10, :lo12:{$symbol->name}");
         } elseif ($symbol->stackOffset !== null) {
@@ -1320,11 +1557,22 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
             $this->builder->addText('mov x10, xzr');
         }
 
-        $this->emitExpression($indexExpr);
-        $elementSize = max(8, $elementType->sizeInBytes());
-        $this->builder->addText("mov x12, #{$elementSize}");
-        $this->builder->addText('mul x13, x0, x12');
+        $this->builder->addText('ldr x13, [sp]');
+        $this->builder->addText('add sp, sp, #16');
         $this->builder->addText('add x11, x10, x13');
+    }
+
+    private function indexedElementType(Type $baseType, int $levels): Type
+    {
+        $type = $baseType;
+        for ($i = 0; $i < $levels; $i++) {
+            if (!$type->isArray() || $type->elementType === null) {
+                return Type::invalid();
+            }
+            $type = $type->elementType;
+        }
+
+        return $type;
     }
 
     private function emitArrayElementWrite(Symbol $symbol, int $index, mixed $literalValue, Type $elementType): void
@@ -1364,6 +1612,14 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
     private function flattenArrayLiteralValues(\Context\ArrayLiteralContext $arrayLiteral): array
     {
         $body = $arrayLiteral->arrayLiteralBody();
+        return $this->flattenArrayLiteralBody($body);
+    }
+
+    /**
+     * @return list<int|float|bool>
+     */
+    private function flattenArrayLiteralBody(?\Context\ArrayLiteralBodyContext $body): array
+    {
         if ($body === null || $body->arrayElementList() === null) {
             return [];
         }
@@ -1372,11 +1628,12 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
         foreach ($this->normalizeList($body->arrayElementList()->arrayElement(null)) as $element) {
             if ($element->expression() !== null) {
                 $values[] = $this->constantScalarValue($element->expression());
-            } elseif ($element->arrayLiteralBody() !== null) {
-                foreach ($this->normalizeList($element->arrayLiteralBody()->arrayElementList()?->arrayElement(null)) as $nested) {
-                    if ($nested->expression() !== null) {
-                        $values[] = $this->constantScalarValue($nested->expression());
-                    }
+                continue;
+            }
+
+            if ($element->arrayLiteralBody() !== null) {
+                foreach ($this->flattenArrayLiteralBody($element->arrayLiteralBody()) as $value) {
+                    $values[] = $value;
                 }
             }
         }
@@ -1411,6 +1668,138 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
     {
         $unary = $expression->logicalOr()?->logicalAnd(0)?->equality(0)?->comparison(0)?->addition(0)?->multiplication(0)?->unary(0);
         return $unary !== null && $unary->primary() === null && $unary->getChild(0)?->getText() === '*';
+    }
+
+    private function emitPointerAssignment(
+        \Context\ExpressionContext $target,
+        \Context\ExpressionContext $source,
+        Symbol $pointerSymbol,
+        string $operator
+    ): void {
+        if ($operator !== '=') {
+            $this->registerLimitation('Solo se soporta asignación simple (=) sobre desreferencias de puntero.');
+            return;
+        }
+
+        $unary = $target->logicalOr()?->logicalAnd(0)?->equality(0)?->comparison(0)?->addition(0)?->multiplication(0)?->unary(0);
+        $pointerExpr = $unary?->unary();
+        if ($pointerExpr === null) {
+            return;
+        }
+
+        $this->emitUnary($pointerExpr);
+        $this->builder->addText('mov x10, x0');
+
+        $this->emitExpression($source);
+        $pointedType = $pointerSymbol->type->pointedType ?? Type::invalid();
+        if ($pointedType->name === Type::FLOAT32) {
+            if ($this->typeOfExpression($source)->name !== Type::FLOAT32) {
+                $this->builder->addText('scvtf s0, w0');
+            }
+            $this->builder->addText('str s0, [x10]');
+            return;
+        }
+
+        $this->builder->addText('str x0, [x10]');
+    }
+
+    private function symbolFromPointerAssignmentTarget(\Context\ExpressionContext $target): ?Symbol
+    {
+        $unary = $target->logicalOr()?->logicalAnd(0)?->equality(0)?->comparison(0)?->addition(0)?->multiplication(0)?->unary(0);
+        if ($unary === null || $unary->primary() !== null || $unary->getChild(0)?->getText() !== '*') {
+            return null;
+        }
+
+        $inner = $unary->unary();
+        $primary = $inner?->primary();
+        if ($primary?->qualifiedIdentifier() !== null) {
+            return $this->resolveCurrentFunctionSymbol($primary->qualifiedIdentifier()->getText());
+        }
+
+        return null;
+    }
+
+    private function tryEmitArrayArgumentAddress(\Context\ExpressionContext $argument, int $regIndex): bool
+    {
+        $primary = $this->extractPrimary($argument);
+        if ($primary?->qualifiedIdentifier() === null) {
+            return false;
+        }
+
+        $sym = $this->resolveCurrentFunctionSymbol($primary->qualifiedIdentifier()->getText());
+        if ($sym === null || !$sym->type->isArray()) {
+            return false;
+        }
+
+        if ($sym->storage === 'global') {
+            $this->builder->addText("adrp x0, {$sym->name}");
+            $this->builder->addText("add x0, x0, :lo12:{$sym->name}");
+        } elseif ($sym->stackOffset !== null) {
+            $this->builder->addText("sub x0, x29, #{$sym->stackOffset}");
+        } else {
+            return false;
+        }
+
+        if ($regIndex !== 0) {
+            $this->builder->addText("mov x{$regIndex}, x0");
+        }
+
+        return true;
+    }
+
+    private function storeArrayValueFromRegisters(Symbol $symbol, Type $arrayType): void
+    {
+        $bytes = max(8, $arrayType->sizeInBytes());
+        $words = min((int) ceil($bytes / 8), 8);
+
+        if ($symbol->storage === 'global') {
+            $this->builder->addText("adrp x15, {$symbol->name}");
+            $this->builder->addText("add x15, x15, :lo12:{$symbol->name}");
+        } elseif ($symbol->stackOffset !== null) {
+            $this->builder->addText("sub x15, x29, #{$symbol->stackOffset}");
+        } else {
+            return;
+        }
+
+        for ($i = 0; $i < $words; $i++) {
+            $off = $i * 8;
+            $this->builder->addText("str x{$i}, [x15, #{$off}]");
+        }
+    }
+
+    private function emitReturnArrayInRegisters(?\Context\ExpressionContext $expr, Type $arrayType): bool
+    {
+        if ($expr === null) {
+            return false;
+        }
+
+        $primary = $this->extractPrimary($expr);
+        if ($primary?->qualifiedIdentifier() === null) {
+            return false;
+        }
+
+        $sym = $this->resolveCurrentFunctionSymbol($primary->qualifiedIdentifier()->getText());
+        if ($sym === null || !$sym->type->isArray()) {
+            return false;
+        }
+
+        if ($sym->storage === 'global') {
+            $this->builder->addText("adrp x15, {$sym->name}");
+            $this->builder->addText("add x15, x15, :lo12:{$sym->name}");
+        } elseif ($sym->stackOffset !== null) {
+            $this->builder->addText("sub x15, x29, #{$sym->stackOffset}");
+        } else {
+            return false;
+        }
+
+        $bytes = max(8, $arrayType->sizeInBytes());
+        $words = min((int) ceil($bytes / 8), 8);
+        for ($i = 0; $i < $words; $i++) {
+            $off = $i * 8;
+            $this->builder->addText("ldr x{$i}, [x15, #{$off}]");
+        }
+
+        return true;
     }
 
     private function extractArrayAccess(\Context\ExpressionContext $expression): ?\Context\ArrayAccessContext
@@ -1577,6 +1966,9 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
 
     private function extractPrimary(?\Context\ExpressionContext $context): ?\Context\PrimaryContext
     {
+        if ($context !== null && ($this->hasTernary($context) || $this->normalizeList($context->functionCall(null)) !== [])) {
+            return null;
+        }
         return $context?->logicalOr()?->logicalAnd(0)?->equality(0)?->comparison(0)?->addition(0)?->multiplication(0)?->unary(0)?->primary();
     }
 
@@ -1591,11 +1983,44 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
             return Type::invalid();
         }
         $acc = $this->typeOfLogicalOr($context->logicalOr());
+        if ($this->hasTernary($context)) {
+            [$whenTrue, $whenFalse] = $this->ternaryBranches($context);
+            $acc = $this->resolveTernaryResultType(
+                $this->typeOfExpression($whenTrue),
+                $this->typeOfExpression($whenFalse)
+            );
+        }
         foreach ($this->normalizeList($context->functionCall(null)) as $call) {
             $acc = $this->typeOfFunctionCallResult($call);
         }
 
         return $acc;
+    }
+
+    /**
+     * @return array{0:?\Context\ExpressionContext,1:?\Context\ExpressionContext}
+     */
+    private function ternaryBranches(\Context\ExpressionContext $context): array
+    {
+        $parts = $this->normalizeList($context->expression(null));
+        return [$parts[0] ?? null, $parts[1] ?? null];
+    }
+
+    private function hasTernary(\Context\ExpressionContext $context): bool
+    {
+        return count($this->normalizeList($context->expression(null))) === 2;
+    }
+
+    private function resolveTernaryResultType(Type $left, Type $right): Type
+    {
+        if (TypeRules::assignmentAllowed($left, $right)) {
+            return $left;
+        }
+        if (TypeRules::assignmentAllowed($right, $left)) {
+            return $right;
+        }
+
+        return Type::invalid();
     }
 
     private function preserveInt64ForPipedLeader(): void
@@ -1619,6 +2044,30 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
     private function restoreFloat32PipedLeaderFromStack(): void
     {
         $this->builder->addText('ldr s0, [sp]');
+        $this->builder->addText('add sp, sp, #16');
+    }
+
+    private function preserveInt64ForRhsEval(): void
+    {
+        $this->builder->addText('sub sp, sp, #16');
+        $this->builder->addText('str x0, [sp]');
+    }
+
+    private function restoreInt64FromSpToX9(): void
+    {
+        $this->builder->addText('ldr x9, [sp]');
+        $this->builder->addText('add sp, sp, #16');
+    }
+
+    private function preserveFloat32ForRhsEval(): void
+    {
+        $this->builder->addText('sub sp, sp, #16');
+        $this->builder->addText('str s0, [sp]');
+    }
+
+    private function restoreFloat32FromSpToS1(): void
+    {
+        $this->builder->addText('ldr s1, [sp]');
         $this->builder->addText('add sp, sp, #16');
     }
 
@@ -1745,6 +2194,9 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
             $symbolType = $this->resolveCurrentFunctionSymbol($context->arrayAccess()->qualifiedIdentifier()->getText())?->type;
             if ($symbolType === null) {
                 return Type::invalid();
+            }
+            if ($symbolType->isPointer() && $symbolType->pointedType !== null) {
+                $symbolType = $symbolType->pointedType;
             }
             foreach ($this->normalizeList($context->arrayAccess()->expression(null)) as $unused) {
                 if ($symbolType->isArray() && $symbolType->elementType !== null) {

@@ -205,7 +205,7 @@ returnStmt
 ====================================================== */
 
 expression
-    : logicalOr ( PIPE functionCall )*
+    : logicalOr ( '?' expression ':' expression )? ( PIPE functionCall )*
     ;
 
 logicalOr
