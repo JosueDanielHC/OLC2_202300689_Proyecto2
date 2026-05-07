@@ -632,7 +632,21 @@ final class SemanticVisitor2 extends \GolampiBaseVisitor
             return Type::invalid();
         }
 
-        return $this->inferLogicalOr($context->logicalOr());
+        $acc = $this->inferLogicalOr($context->logicalOr());
+        foreach ($this->normalizeList($context->functionCall(null)) as $call) {
+            $returns = $this->inferFunctionCallReturnTypes($call, $acc);
+            $acc = $returns[0] ?? Type::invalid();
+        }
+
+        return $acc;
+    }
+
+    /**
+     * @return list<\Context\FunctionCallContext>
+     */
+    private function expressionPipeCalls(\Context\ExpressionContext $context): array
+    {
+        return $this->normalizeList($context->functionCall(null));
     }
 
     private function inferLogicalOr(?\Context\LogicalOrContext $context): Type
@@ -809,7 +823,7 @@ final class SemanticVisitor2 extends \GolampiBaseVisitor
     /**
      * @return list<Type>
      */
-    private function inferFunctionCallReturnTypes(?\Context\FunctionCallContext $context): array
+    private function inferFunctionCallReturnTypes(?\Context\FunctionCallContext $context, ?Type $pipedPrefixType = null): array
     {
         if ($context === null || $context->qualifiedIdentifier() === null) {
             return [Type::invalid()];
@@ -820,6 +834,9 @@ final class SemanticVisitor2 extends \GolampiBaseVisitor
             ? $this->normalizeList($context->argumentList()->expression(null))
             : [];
         $argumentTypes = array_map(fn ($expr): Type => $this->inferExpressionType($expr), $arguments);
+        if ($pipedPrefixType !== null) {
+            array_unshift($argumentTypes, $pipedPrefixType);
+        }
 
         if ($name === 'main') {
             $this->addError('Semántico', $context, 'La función main no puede ser invocada explícitamente.');
@@ -1040,6 +1057,10 @@ final class SemanticVisitor2 extends \GolampiBaseVisitor
 
     private function isAssignableExpression(\Context\ExpressionContext $context): bool
     {
+        if ($this->expressionPipeCalls($context) !== []) {
+            return false;
+        }
+
         $logicalOr = $context->logicalOr();
         $logicalAnd = $logicalOr?->logicalAnd(0);
         $equality = $logicalAnd?->equality(0);
@@ -1058,6 +1079,10 @@ final class SemanticVisitor2 extends \GolampiBaseVisitor
 
     private function symbolFromExpression(\Context\ExpressionContext $context): ?Symbol
     {
+        if ($this->expressionPipeCalls($context) !== []) {
+            return null;
+        }
+
         $logicalOr = $context->logicalOr();
         $logicalAnd = $logicalOr?->logicalAnd(0);
         $equality = $logicalAnd?->equality(0);
@@ -1125,6 +1150,10 @@ final class SemanticVisitor2 extends \GolampiBaseVisitor
 
     private function extractFunctionCall(\Context\ExpressionContext $context): ?\Context\FunctionCallContext
     {
+        if ($this->expressionPipeCalls($context) !== []) {
+            return null;
+        }
+
         $primary = $context->logicalOr()?->logicalAnd(0)?->equality(0)?->comparison(0)?->addition(0)?->multiplication(0)?->unary(0)?->primary();
         return $primary?->functionCall();
     }
@@ -1132,6 +1161,10 @@ final class SemanticVisitor2 extends \GolampiBaseVisitor
     private function constantValueOfExpression(?\Context\ExpressionContext $context): mixed
     {
         if ($context === null) {
+            return null;
+        }
+
+        if ($this->expressionPipeCalls($context) !== []) {
             return null;
         }
 

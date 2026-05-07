@@ -205,7 +205,7 @@ returnStmt
 ====================================================== */
 
 expression
-    : logicalOr
+    : logicalOr ( PIPE functionCall )*
     ;
 
 logicalOr
@@ -339,4 +339,8 @@ LINE_COMMENT
 
 BLOCK_COMMENT
     : '/*' .*? '*/' -> skip
+    ;
+
+PIPE
+    : '|>'
     ;

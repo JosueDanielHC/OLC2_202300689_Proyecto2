@@ -605,7 +605,12 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
             return;
         }
 
+        $accType = $this->typeOfLogicalOr($context->logicalOr());
         $this->emitLogicalOr($context->logicalOr());
+        foreach ($this->normalizeList($context->functionCall(null)) as $call) {
+            $this->emitFunctionCall($call, $accType);
+            $accType = $this->typeOfFunctionCallResult($call);
+        }
     }
 
     private function emitLogicalOr(?\Context\LogicalOrContext $context): void
@@ -969,18 +974,30 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
         });
     }
 
-    private function emitFunctionCall(\Context\FunctionCallContext $context): void
+    private function emitFunctionCall(\Context\FunctionCallContext $context, ?Type $leadingArgType = null): void
     {
         $name = $context->qualifiedIdentifier()?->getText() ?? '';
         $arguments = $context->argumentList() !== null ? $this->normalizeList($context->argumentList()->expression(null)) : [];
 
         if ($name === BuiltinRegistry::PRINTLN) {
-            $this->emitPrintlnCall($context);
+            $this->emitPrintlnCall($context, $leadingArgType);
             $this->builder->addText('mov x0, #0');
             return;
         }
 
         if ($name === BuiltinRegistry::LEN) {
+            if ($leadingArgType !== null && count($arguments) === 0) {
+                if ($leadingArgType->isArray()) {
+                    $this->builder->addText('mov x0, #' . ($leadingArgType->length ?? 0));
+
+                    return;
+                }
+                if ($leadingArgType->name === Type::STRING) {
+                    $this->builder->addText('bl __strlen');
+
+                    return;
+                }
+            }
             $this->emitLenBuiltin($arguments);
             return;
         }
@@ -992,45 +1009,122 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
         }
 
         if ($name === BuiltinRegistry::SUBSTR) {
+            if ($leadingArgType !== null && $leadingArgType->name === Type::STRING && count($arguments) === 2) {
+                $this->preserveInt64ForPipedLeader();
+                $this->emitExpression($arguments[0]);
+                $this->builder->addText('mov x1, x0');
+                $this->emitExpression($arguments[1]);
+                $this->builder->addText('mov x2, x0');
+                $this->restoreInt64PipedLeaderFromStack();
+                $this->builder->addText('bl __substr');
+
+                return;
+            }
             $this->emitSubstrBuiltin($arguments);
             return;
         }
 
         if ($name === BuiltinRegistry::TYPEOF) {
+            if ($leadingArgType !== null && count($arguments) === 0) {
+                $this->emitTypeOfStaticTypeLabel($leadingArgType);
+
+                return;
+            }
             $this->emitTypeOfBuiltin($arguments);
             return;
         }
 
+        $explicitCount = count($arguments);
+        if ($leadingArgType !== null && $explicitCount > 0) {
+            if ($leadingArgType->name === Type::FLOAT32) {
+                $this->preserveFloat32ForPipedLeader();
+            } else {
+                $this->preserveInt64ForPipedLeader();
+            }
+        }
+
         foreach ($arguments as $index => $argument) {
-            if ($index > 7) {
+            $paramSlot = $leadingArgType !== null ? $index + 1 : $index;
+            if ($paramSlot > 7) {
                 break;
             }
             $this->emitExpression($argument);
             $type = $this->typeOfExpression($argument);
             if ($type->name === Type::FLOAT32) {
-                if ($index !== 0) {
-                    $this->builder->addText('fmov s' . $index . ', s0');
+                if ($paramSlot !== 0) {
+                    $this->builder->addText('fmov s' . $paramSlot . ', s0');
                 }
+            } elseif ($paramSlot !== 0) {
+                $this->builder->addText('mov x' . $paramSlot . ', x0');
+            }
+        }
+
+        if ($leadingArgType !== null && $explicitCount > 0) {
+            if ($leadingArgType->name === Type::FLOAT32) {
+                $this->restoreFloat32PipedLeaderFromStack();
             } else {
-                $this->builder->addText('mov x' . $index . ', x0');
+                $this->restoreInt64PipedLeaderFromStack();
             }
         }
 
         $this->builder->addText("bl {$name}");
     }
 
-    private function emitPrintlnCall(\Context\FunctionCallContext $context): void
+    private function emitPrintlnCall(\Context\FunctionCallContext $context, ?Type $leadingArgType = null): void
     {
         $arguments = $context->argumentList() !== null ? $this->normalizeList($context->argumentList()->expression(null)) : [];
-        foreach ($arguments as $index => $argument) {
+        $printed = false;
+        if ($leadingArgType !== null) {
+            $this->emitPrintValueByType($leadingArgType);
+            $printed = true;
+        }
+        foreach ($arguments as $argument) {
+            if ($printed) {
+                $this->builder->addText('bl __print_space');
+            }
             $this->emitExpression($argument);
             $type = $this->typeOfExpression($argument);
             $this->emitPrintValueByType($type);
-            if ($index < count($arguments) - 1) {
-                $this->builder->addText('bl __print_space');
-            }
+            $printed = true;
         }
         $this->builder->addText('bl __print_newline');
+    }
+
+    private function emitTypeOfStaticTypeLabel(Type $type): void
+    {
+        $label = match ($type->name) {
+            Type::INT32 => 'type_int32',
+            Type::BOOL => 'type_bool',
+            Type::STRING => 'type_string',
+            Type::FLOAT32 => 'type_float32',
+            Type::RUNE => 'type_rune',
+            Type::NIL => 'type_nil',
+            default => 'type_nil',
+        };
+        $this->builder->addText("adrp x0, {$label}");
+        $this->builder->addText("add x0, x0, :lo12:{$label}");
+    }
+
+    private function typeOfFunctionCallResult(\Context\FunctionCallContext $context): Type
+    {
+        $name = $context->qualifiedIdentifier()?->getText() ?? '';
+        if (BuiltinRegistry::isBuiltin($name)) {
+            return match ($name) {
+                BuiltinRegistry::PRINTLN => Type::nil(),
+                BuiltinRegistry::LEN => Type::int32(),
+                BuiltinRegistry::NOW => Type::string(),
+                BuiltinRegistry::SUBSTR => Type::string(),
+                BuiltinRegistry::TYPEOF => Type::string(),
+                default => Type::invalid(),
+            };
+        }
+        $fn = $this->model->function($name);
+        if ($fn === null) {
+            return Type::invalid();
+        }
+        $r = $fn->returnTypes;
+
+        return $r[0] ?? Type::nil();
     }
 
     private function emitPrintValueByType(Type $type): void
@@ -1493,7 +1587,39 @@ final class Arm64CodegenVisitor extends \GolampiBaseVisitor
 
     private function typeOfExpression(?\Context\ExpressionContext $context): Type
     {
-        return $this->typeOfLogicalOr($context?->logicalOr());
+        if ($context === null) {
+            return Type::invalid();
+        }
+        $acc = $this->typeOfLogicalOr($context->logicalOr());
+        foreach ($this->normalizeList($context->functionCall(null)) as $call) {
+            $acc = $this->typeOfFunctionCallResult($call);
+        }
+
+        return $acc;
+    }
+
+    private function preserveInt64ForPipedLeader(): void
+    {
+        $this->builder->addText('sub sp, sp, #16');
+        $this->builder->addText('str x0, [sp]');
+    }
+
+    private function restoreInt64PipedLeaderFromStack(): void
+    {
+        $this->builder->addText('ldr x0, [sp]');
+        $this->builder->addText('add sp, sp, #16');
+    }
+
+    private function preserveFloat32ForPipedLeader(): void
+    {
+        $this->builder->addText('sub sp, sp, #16');
+        $this->builder->addText('str s0, [sp]');
+    }
+
+    private function restoreFloat32PipedLeaderFromStack(): void
+    {
+        $this->builder->addText('ldr s0, [sp]');
+        $this->builder->addText('add sp, sp, #16');
     }
 
     private function typeOfLogicalOr(?\Context\LogicalOrContext $context): Type

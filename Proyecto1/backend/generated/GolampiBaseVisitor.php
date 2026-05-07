@@ -1,7 +1,7 @@
 <?php
 
 /*
- * Generated from Golampi.g4 by ANTLR 4.13.1
+ * Generated from /home/daniel/Documentos/compi2/golampi-interpreter/Proyecto1/backend/grammar/Golampi.g4 by ANTLR 4.13.1
  */
 
 use Antlr\Antlr4\Runtime\Tree\AbstractParseTreeVisitor;
